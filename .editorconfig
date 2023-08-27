@@ -1,0 +1,9 @@
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+fontFamily = "MapleMono Italic,/home/codespace/.local/share/fonts/MapleMono-Italic.woff2"
+
+[*.v]
+indent_style = tab
