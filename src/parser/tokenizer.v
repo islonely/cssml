@@ -16,15 +16,11 @@ enum TokenizerState {
 	tag_class
 	attribute_name
 	attribute_value
+	style_attribute
 	before_css_rule_name
 	css_rule_name
-	after_css_rule_name
-	before_css_rule_value
 	css_rule_value
-	after_css_rule_value
-	before_inner_text
 	inner_text
-	after_inner_text
 	in_comment
 	eof
 }
@@ -73,7 +69,7 @@ fn (mut t Tokenizer) consume() ?rune {
 
 fn (mut t Tokenizer) emit_token() Token {
 	if _unlikely_(t.state == .eof) {
-		return Token(EOFToken(0))
+		return Token(EOFToken(t.pos))
 	}
 	if t.buffer.len == 0 {
 		t.buffer << match t.state {
@@ -83,19 +79,14 @@ fn (mut t Tokenizer) emit_token() Token {
 			.tag_class { t.tag_class() }
 			.attribute_name { t.attribute_name() }
 			.attribute_value { t.attribute_value() }
-			// .after_tag {}
-			// .before_css_rule_name {}
-			// .css_rule_name {}
-			// .after_css_rule_name {}
-			// .before_css_rule_value {}
-			// .css_rule_value {}
-			// .after_css_rule_value {}
-			// .before_inner_text {}
-			// .inner_text {}
-			// .after_inner_text {}
+			.after_tag { t.after_tag() }
+			.before_css_rule_name { t.before_css_rule_name() }
+			.css_rule_name { t.css_rule_name() }
+			.css_rule_value { t.css_rule_value() }
+			.inner_text { t.inner_text() }
 			// .in_comment {}
 			.eof { t.eof() }
-			else { [Token(EOFToken(0))] }
+			else { [Token(EOFToken(t.pos))] }
 		}
 	}
 
@@ -113,7 +104,7 @@ fn (mut t Tokenizer) before_tag_name() []Token {
 		t.str = strings.new_builder(100)
 		t.str.write_rune(r)
 		t.state = .tag_name
-		t.token = TagToken{}
+		t.token = TagToken{pos: t.pos}
 		return t.tag_name()
 	}
 
@@ -136,6 +127,7 @@ fn (mut t Tokenizer) tag_name() []Token {
 
 	if r == `#` {
 		mut tag := t.token as TagToken
+		tag.pos = t.pos
 		tag.name = t.str.str()
 		t.str = strings.new_builder(100)
 		t.token = tag
@@ -152,6 +144,7 @@ fn (mut t Tokenizer) tag_name() []Token {
 	if r == `.` {
 		mut tag := t.token as TagToken
 		tag.name = t.str.str()
+		tag.pos = t.pos
 		t.str = strings.new_builder(100)
 		t.token = tag
 		t.state = .tag_class
@@ -167,6 +160,7 @@ fn (mut t Tokenizer) tag_name() []Token {
 	if r == `$` {
 		mut tag := t.token as TagToken
 		tag.name = t.str.str()
+		tag.pos = t.pos
 		t.str = strings.new_builder(100)
 		t.token = tag
 		t.state = .attribute_name
@@ -180,11 +174,26 @@ fn (mut t Tokenizer) tag_name() []Token {
 	mut tag := t.token as TagToken
 	tag.name = t.str.str()
 	t.state = .after_tag
+	t.str = strings.new_builder(100)
 	return [Token(tag)]
 }
 
 fn (mut t Tokenizer) after_tag() []Token {
-	return [Token(EOFToken(0))]
+	r := t.consume() or {
+		return t.eof()
+	}
+
+	if r == `{` {
+		t.state = .before_css_rule_name
+		t.str = strings.new_builder(100)
+		return t.before_css_rule_name()
+	}
+
+	if r !in parser.whitespace {
+		println('Invalid character after tag name: ${r}')
+	}
+
+	return t.after_tag()
 }
 
 fn (mut t Tokenizer) tag_id() []Token {
@@ -219,6 +228,7 @@ fn (mut t Tokenizer) tag_id() []Token {
 		println('Invalid character in tag id: ${r}')
 	}
 	t.state = .after_tag
+	t.str = strings.new_builder(100)
 	return [t.token]
 }
 
@@ -263,6 +273,7 @@ fn (mut t Tokenizer) tag_class() []Token {
 	}
 
 	t.state = .after_tag
+	t.str = strings.new_builder(100)
 	return [t.token]
 }
 
@@ -285,6 +296,7 @@ fn (mut t Tokenizer) attribute_name() []Token {
 
 	println('Invalid character in attribute: ${r}')
 	t.state = .after_tag
+	t.str = strings.new_builder(100)
 	return [t.token]
 }
 
@@ -318,6 +330,7 @@ fn (mut t Tokenizer) attribute_value() []Token {
 			return t.attribute_name()
 		}
 		t.state = .after_tag
+		t.str = strings.new_builder(100)
 		return [Token(tag)]
 	}
 
@@ -325,7 +338,200 @@ fn (mut t Tokenizer) attribute_value() []Token {
 	return t.attribute_value()
 }
 
+fn (mut t Tokenizer) style_attribute() []Token {
+	r := t.consume() or {
+		return t.eof()
+	}
+
+	if r == `]` {
+		t.token = StyleAttributeToken{
+			pos: t.pos
+			name: t.str.str()
+		}
+		t.state = .before_css_rule_name
+		t.str = strings.new_builder(100)
+		return [t.token]
+	}
+
+	if r !in parser.alphahyphen {
+		println('Invalid character in style attribute: ${r}')
+	}
+
+	t.str.write_rune(r)
+	return t.style_attribute()
+}
+
+fn (mut t Tokenizer) before_css_rule_name() []Token {
+	r := t.consume() or {
+		return t.eof()
+	}
+
+	if r in parser.whitespace {
+		return t.before_css_rule_name()
+	}
+
+	if r in parser.alphahyphen {
+		t.pos--
+		t.state = .css_rule_name
+		return t.css_rule_name()
+	}
+
+	if r == `:` {
+		if t.str.len == 0 {
+			println('CSS rule missing property name at position: ${t.pos}')
+		}
+		t.token = CSSRuleToken{pos: t.pos}
+		t.state = .css_rule_value
+		t.str = strings.new_builder(100)
+		return t.css_rule_value()
+	}
+
+	if r == `[` {
+		t.state = .style_attribute
+		t.str = strings.new_builder(100)
+		return t.style_attribute()
+	}
+
+	if r == `{` {
+		t.state = .inner_text
+		t.str = strings.new_builder(100)
+		return t.inner_text()
+	}
+
+	if r == `}` {
+		t.state = .before_css_rule_name
+		return [CloseTagToken{
+			pos: t.pos
+		}]
+	}
+
+	println('Invalid character before CSS rule name or tag name: ${r}')
+	return t.before_css_rule_name()
+}
+
+fn (mut t Tokenizer) css_rule_name() []Token {
+	r := t.consume() or {
+		return t.eof()
+	}
+
+	if r in parser.whitespace {
+		return t.css_rule_name()
+	}
+
+	if r in parser.alphahyphen {
+		t.str.write_rune(r)
+		return t.css_rule_name()
+	}
+
+	if r == `:` {
+		t.token = CSSRuleToken{
+			pos: t.pos
+			property: t.str.str()
+		}
+		t.str = strings.new_builder(100)
+		t.state = .css_rule_value
+		return t.css_rule_value()
+	}
+
+	// if this appears, we're starting a new tag instead of a CSS rule.
+	// the function/state name should be updated to "css_rule_or_tag_name"
+	if r == `{` {
+		t.pos--
+		t.token = TagToken{
+			pos: t.pos
+			name: t.str.str()
+		}
+		t.state = .after_tag
+		t.str = strings.new_builder(100)
+		return [t.token]
+	}
+
+	if r == `#` {
+		t.token = TagToken{
+			pos: t.pos
+			name: t.str.str()
+		}
+		t.str = strings.new_builder(100)
+		t.state = .tag_id
+		return t.tag_id()
+	}
+
+	if r == `.` {
+		t.token = TagToken{
+			pos: t.pos
+			name: t.str.str()
+		}
+		t.str = strings.new_builder(100)
+		t.state = .tag_class
+		return t.tag_class()
+	}
+
+	if r == `$` {
+		t.token = TagToken{
+			pos: t.pos
+			name: t.str.str()
+		}
+		t.str = strings.new_builder(100)
+		t.state = .attribute_name
+		return t.attribute_name()
+	}
+
+	println('Invalid character in CSS rule name: ${r}')
+	t.str.write_rune(r)
+	return t.css_rule_name()
+}
+
+fn (mut t Tokenizer) css_rule_value() []Token {
+	r := t.consume() or {
+		return t.eof()
+	}
+
+	if r in parser.whitespace {
+		return t.css_rule_value()
+	}
+
+	if r == `;` {
+		mut rule := t.token as CSSRuleToken
+		rule.value = t.str.str()
+		t.str = strings.new_builder(100)
+		t.state = .before_css_rule_name
+		return [rule]
+	}
+
+	t.str.write_rune(r)
+	return t.css_rule_value()
+}
+
+fn (mut t Tokenizer) inner_text() []Token {
+	r := t.consume() or {
+		return t.eof()
+	}
+
+	if r == `\\` {
+		if next := t.next() {
+			t.str.write_rune(next)
+			t.pos++
+		} else {
+			t.str.write_rune(r)
+		}
+		return t.inner_text()
+	}
+
+	if r == `}` {
+		t.state = .before_css_rule_name
+		t.token = TextToken{
+			pos: t.pos
+			text: t.str.str()
+		}
+		t.str = strings.new_builder(100)
+		return [t.token]
+	}
+
+	t.str.write_rune(r)
+	return t.inner_text()
+}
+
 fn (mut t Tokenizer) eof() []Token {
 	t.state = .eof
-	return [Token(EOFToken(0))]
+	return [Token(EOFToken(t.pos+1))]
 }

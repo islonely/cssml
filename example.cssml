@@ -1,16 +1,11 @@
 html {
 	head {
-		// attributes with $, value inside "()".
-		meta$charset(utf-8)
-		meta$name(viewport)$content(width=device-width, initial-scale=1)
-		// second pair of curly braces denotes text content of the tag.
+		meta$charset(utf-8) {}
+		meta$name(viewport)$content(width=device-width, initial-scale=1) {}
 		title {{Home Page}}
 	}
 	body {
 		nav#mainNav {
-			// CSS rules are at the top of the nest.
-			// CSS rules are applied to all unless "[exclusive]" is used. In this case
-			// all nav#mainNav will have these rules applied to them
 			[exclusive]
 			position: fixed;
 			top: 0;
@@ -21,12 +16,9 @@ html {
 					a#active.link$href(#) {
 						font-weight: bold;
 						
-						// second pair of curly braces denotes text content of the tag.
 						{Home Page}
 					}
 					a.link$href(somewhere_else.cssml) {
-						// CSS rules that aren't preceded by "[exclusive]" will be
-						// applied to all "a.link" in this case.
 						border-radius: 5px;
 						box-shadow: 1px 1px 10px #aaa;
 					}
@@ -34,8 +26,6 @@ html {
 			}
 			
 			input#search$type(text) {
-				// CSS rules preced by "[attributes]" will create a CSS
-				// style that applies to "input#search[type='text']" in this case.
 				[attributes]
 				
 			}
