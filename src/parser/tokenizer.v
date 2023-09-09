@@ -3,47 +3,46 @@ module parser
 import strings
 
 const (
-	alphahyphen = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-'.runes()
-	alpha = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'.runes()
-	whitespace = [rune(0x0009), 0x000a, 0x000c, 0x000d, 0x0020]
+	newline        = '\n\f'.runes()
+	whitespace     = '\n\r\f\t '.runes()
+	hex            = '0123456789abcdefABCDEF'.runes()
+	tag_name_chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-'.runes()
+	alpha          = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'.runes()
+	digits         = '0123456789'.runes()
+	replacement    = rune(0xfffd)
 )
 
 enum TokenizerState {
-	before_tag_name
-	tag_name
-	after_tag
-	tag_id
-	tag_class
-	attribute_name
-	attribute_value
-	style_attribute
-	before_css_rule_name
-	css_rule_name
-	css_rule_value
-	inner_text
-	in_comment
 	eof
+	extern
+	extern_after_query_selector
+	extern_in_css_block
+	in_comment
+	in_css_rule_name
+	in_css_rule_value
 }
 
 struct Tokenizer {
-	src []rune
+	src     []rune
+	src_str string
 mut:
-	pos int = -1
-	// it's more convenient to generate multiple tokens than one at a time
-	// for some CSSML. But we still want to emit only one token at a time.
-	// So we add them to a buffer and the token emitter will pull from the
-	// front of the buffer. It shouldn't emit more than 10 at a time.
-	buffer []Token = []Token{cap: 10}
-	state TokenizerState = .before_tag_name
-	str strings.Builder = strings.new_builder(100)
-	attr string
+	pos          int
+	tok_len      int
+	state        TokenizerState  = .extern
+	return_state TokenizerState  = .extern
+	buf          strings.Builder = strings.new_builder(100)
+	attr         string
+	inside_html  bool
 	// current Token being modified
 	token Token
 }
 
 [inline]
-fn Tokenizer.new(src []rune) Tokenizer {
-	return Tokenizer{src: src}
+fn Tokenizer.new(src string) Tokenizer {
+	return Tokenizer{
+		src: src.runes()
+		src_str: src
+	}
 }
 
 [inline]
@@ -53,485 +52,253 @@ fn (t Tokenizer) current() rune {
 
 [inline]
 fn (t Tokenizer) next() ?rune {
-	return if t.pos + 1 >= t.src.len {
+	return if t.pos >= t.src.len {
 		none
 	} else {
-		t.src[t.pos + 1]
+		t.src[t.pos]
 	}
 }
 
-[inline]
 fn (mut t Tokenizer) consume() ?rune {
-	next := t.next()?
+	if t.pos >= t.src.len {
+		return none
+	}
+	r := t.src[t.pos]
 	t.pos++
-	return next
+	t.tok_len++
+	return r
 }
 
-fn (mut t Tokenizer) emit_token() Token {
-	if _unlikely_(t.state == .eof) {
-		return Token(EOFToken(t.pos))
+fn (mut t Tokenizer) emit_token() !Token {
+	return match t.state {
+		.eof { t.state__eof() }
+		.extern { t.state__extern()! }
+		.extern_after_query_selector { t.state__extern_after_query_selector()! }
+		.extern_in_css_block { t.state__extern_in_css_block()! }
+		.in_comment { t.state__in_comment() }
+		.in_css_rule_name { t.state__in_css_rule_name()! }
+		.in_css_rule_value { t.state__in_css_rule_value()! }
 	}
-	if t.buffer.len == 0 {
-		t.buffer << match t.state {
-			.before_tag_name { t.before_tag_name() }
-			.tag_name { t.tag_name() }
-			.tag_id { t.tag_id() }
-			.tag_class { t.tag_class() }
-			.attribute_name { t.attribute_name() }
-			.attribute_value { t.attribute_value() }
-			.after_tag { t.after_tag() }
-			.before_css_rule_name { t.before_css_rule_name() }
-			.css_rule_name { t.css_rule_name() }
-			.css_rule_value { t.css_rule_value() }
-			.inner_text { t.inner_text() }
-			// .in_comment {}
-			.eof { t.eof() }
-			else { [Token(EOFToken(t.pos))] }
-		}
-	}
-
-	tok := t.buffer.first()
-	t.buffer.delete(0)
-	return tok
 }
 
-fn (mut t Tokenizer) before_tag_name() []Token {
-	r := t.consume() or {
-		return t.eof()
-	}
-
-	if r in parser.alphahyphen {
-		t.str = strings.new_builder(100)
-		t.str.write_rune(r)
-		t.state = .tag_name
-		t.token = TagToken{pos: t.pos}
-		return t.tag_name()
-	}
-
-	// ignore whitespace. all other characters are invalid.
-	if r !in parser.whitespace {
-		println('Invalid character "${r}".')
-	}
-	return t.before_tag_name()
+// reset_buf returns the contents of the Tokenizer.buf field and sets
+// it to a new string buidler.
+fn (mut t Tokenizer) reset_buf() string {
+	str := t.buf.str()
+	t.buf = strings.new_builder(200)
+	return str
 }
 
-fn (mut t Tokenizer) tag_name() []Token {
-	r := t.consume() or {
-		return t.eof()
-	}
-
-	if r in parser.alphahyphen {
-		t.str.write_rune(r)
-		return t.tag_name()
-	}
-
-	if r == `#` {
-		mut tag := t.token as TagToken
-		tag.pos = t.pos
-		tag.name = t.str.str()
-		t.str = strings.new_builder(100)
-		t.token = tag
-		t.state = .tag_id
-		if tag.class.len > 0 {
-			println('Tag id should come before the class(es).')
-		}
-		if tag.attributes.len > 0 {
-			println('Tag id should come before other attributes.')
-		}
-		return t.tag_id()
-	}
-
-	if r == `.` {
-		mut tag := t.token as TagToken
-		tag.name = t.str.str()
-		tag.pos = t.pos
-		t.str = strings.new_builder(100)
-		t.token = tag
-		t.state = .tag_class
-		if tag.id.len == 0 {
-			println('Tag class(es) should come after the id.')
-		}
-		if tag.attributes.len > 0 {
-			println('Tag class(es) should come before other attributes.')
-		}
-		return t.tag_class()
-	}
-
-	if r == `$` {
-		mut tag := t.token as TagToken
-		tag.name = t.str.str()
-		tag.pos = t.pos
-		t.str = strings.new_builder(100)
-		t.token = tag
-		t.state = .attribute_name
-		return t.attribute_name()
-	}
-
-	if r !in parser.whitespace {
-		t.pos--
-	}
-
-	mut tag := t.token as TagToken
-	tag.name = t.str.str()
-	t.state = .after_tag
-	t.str = strings.new_builder(100)
-	return [Token(tag)]
+// buf gets the contents of the Tokenizer.buf without freeing the memory.
+[inline]
+fn (mut t Tokenizer) buf() string {
+	return t.buf.bytestr()
 }
 
-fn (mut t Tokenizer) after_tag() []Token {
-	r := t.consume() or {
-		return t.eof()
+// state__eof returns an EOFToken (end-of-file) set to the current tokenizer position.
+[inline]
+fn (mut t Tokenizer) state__eof() Token {
+	return EOFToken{
+		pos: t.pos
+		len: t.tok_len
 	}
-
-	if r == `{` {
-		t.state = .before_css_rule_name
-		t.str = strings.new_builder(100)
-		return t.before_css_rule_name()
-	}
-
-	if r !in parser.whitespace {
-		println('Invalid character after tag name: ${r}')
-	}
-
-	return t.after_tag()
 }
 
-fn (mut t Tokenizer) tag_id() []Token {
-	r := t.consume() or {
-		return t.eof()
-	}
+fn (mut t Tokenizer) state__extern() !Token {
+	r := t.consume() or { return t.state__eof() }
 
-	if r in parser.alphahyphen {
-		t.str.write_rune(r)
-		return t.tag_id()
-	}
-
-	if r == `.` {
-		mut tag := t.token as TagToken
-		tag.id = t.str.str()
-		t.str = strings.new_builder(100)
-		t.token = tag
-		t.state = .tag_class
-		return t.tag_class()
-	}
-
-	if r == `$` {
-		mut tag := t.token as TagToken
-		tag.id = t.str.str()
-		t.str = strings.new_builder(100)
-		t.token = tag
-		t.state = .attribute_name
-		return t.attribute_name()
-	}
-
-	if r !in parser.whitespace {
-		println('Invalid character in tag id: ${r}')
-	}
-	t.state = .after_tag
-	t.str = strings.new_builder(100)
-	return [t.token]
-}
-
-fn (mut t Tokenizer) tag_class() []Token {
-	r := t.consume() or {
-		return t.eof()
-	}
-
-	if r in parser.alphahyphen {
-		t.str.write_rune(r)
-		return t.tag_class()
-	}
-
-	if r == `.` {
-		mut tag := t.token as TagToken
-		tag.class << t.str.str()
-		t.str = strings.new_builder(100)
-		t.token = tag
-		return t.tag_class()
-	}
-
-	if r == `#` {
-		mut tag := t.token as TagToken
-		tag.class << t.str.str()
-		t.str = strings.new_builder(100)
-		t.token = tag
-		t.state = .tag_id
-		return t.tag_id()
-	}
-
-	if r == `$` {
-		mut tag := t.token as TagToken
-		tag.class << t.str.str()
-		t.str = strings.new_builder(100)
-		t.token = tag
-		t.state = .attribute_name
-		return t.attribute_name()
-	}
-
-	if r !in parser.whitespace {
-		println('Invalid character in class name: ${r}')
-	}
-
-	t.state = .after_tag
-	t.str = strings.new_builder(100)
-	return [t.token]
-}
-
-fn (mut t Tokenizer) attribute_name() []Token {
-	r := t.consume() or {
-		return t.eof()
-	}
-
-	if r in parser.alphahyphen {
-		t.str.write_rune(r)
-		return t.attribute_name()
-	}
-
-	if r == `(` {
-		t.attr = t.str.str()
-		t.str = strings.new_builder(100)
-		t.state = .attribute_value
-		return t.attribute_value()
-	}
-
-	println('Invalid character in attribute: ${r}')
-	t.state = .after_tag
-	t.str = strings.new_builder(100)
-	return [t.token]
-}
-
-fn (mut t Tokenizer) attribute_value() []Token {
-	r := t.consume() or {
-		return t.eof()
-	}
-
-	// escape any character followed by backslash
-	if r == `\\` {
+	if r == `/` {
 		if next := t.next() {
-			t.str.write_rune(next)
-			t.pos++
-		} else {
-			t.str.write_rune(r)
+			if next == `/` {
+				t.consume() or { panic('We just did t.next()?') }
+				t.state = .in_comment
+				t.return_state = .extern
+				return t.state__in_comment()
+			}
 		}
-		return t.attribute_value()
 	}
 
-	if r == `)` {
-		mut tag := t.token as TagToken
-		tag.attributes[t.attr] = t.str.str()
-		next := t.next() or {
-			t.state = .eof
-			return [Token(tag)]
-		}
-		if next == `$` {
-			t.state = .attribute_name
-			t.pos++
-			t.token = tag
-			return t.attribute_name()
-		}
-		t.state = .after_tag
-		t.str = strings.new_builder(100)
-		return [Token(tag)]
+	if r in parser.newline {
+		return t.state__extern()
 	}
 
-	t.str.write_rune(r)
-	return t.attribute_value()
-}
-
-fn (mut t Tokenizer) style_attribute() []Token {
-	r := t.consume() or {
-		return t.eof()
-	}
-
-	if r == `]` {
-		t.token = StyleAttributeToken{
-			pos: t.pos
-			name: t.str.str()
-		}
-		t.state = .before_css_rule_name
-		t.str = strings.new_builder(100)
-		return [t.token]
-	}
-
-	if r !in parser.alphahyphen {
-		println('Invalid character in style attribute: ${r}')
-	}
-
-	t.str.write_rune(r)
-	return t.style_attribute()
-}
-
-fn (mut t Tokenizer) before_css_rule_name() []Token {
-	r := t.consume() or {
-		return t.eof()
+	if r in parser.tag_name_chars {
+		t.buf.write_rune(r)
+		return t.state__extern()
 	}
 
 	if r in parser.whitespace {
-		return t.before_css_rule_name()
-	}
-
-	if r in parser.alphahyphen {
-		t.pos--
-		t.state = .css_rule_name
-		return t.css_rule_name()
-	}
-
-	if r == `:` {
-		if t.str.len == 0 {
-			println('CSS rule missing property name at position: ${t.pos}')
+		if t.buf.bytestr() == 'html' {
+			return TagToken{
+				pos: t.pos - t.tok_len
+				len: t.tok_len - 1 // -1 for whitespace
+				name: 'html'
+			}
 		}
-		t.token = CSSRuleToken{pos: t.pos}
-		t.state = .css_rule_value
-		t.str = strings.new_builder(100)
-		return t.css_rule_value()
+
+		t.state = .extern_after_query_selector
+		defer {
+			t.tok_len = 0
+		}
+		return CSSRuleOpen{
+			pos: t.pos - t.tok_len
+			len: t.tok_len - 1 // -1 for whitespace
+			query_selector: t.reset_buf()
+		}
 	}
 
-	if r == `[` {
-		t.state = .style_attribute
-		t.str = strings.new_builder(100)
-		return t.style_attribute()
+	line, col := t.get_line_col()
+	return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}')
+}
+
+fn (mut t Tokenizer) state__extern_after_query_selector() !Token {
+	r := t.consume() or { return t.state__eof() }
+
+	if r in parser.whitespace {
+		return t.state__extern_after_query_selector()!
 	}
 
 	if r == `{` {
-		t.state = .inner_text
-		t.str = strings.new_builder(100)
-		return t.inner_text()
+		t.state = .extern_in_css_block
+		return t.state__extern_in_css_block()!
+	}
+
+	line, col := t.get_line_col()
+	return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}')
+}
+
+fn (mut t Tokenizer) state__extern_in_css_block() !Token {
+	r := t.consume() or { return t.state__eof() }
+
+	if r in parser.whitespace {
+		return t.state__extern_in_css_block()!
+	}
+
+	if r in parser.tag_name_chars {
+		t.return_state = .extern_in_css_block
+		t.pos-- // reconsume as part of CSS rule name (--webkit-box-shadow)
+		t.state = .in_css_rule_name
+		return t.state__in_css_rule_name()!
 	}
 
 	if r == `}` {
-		t.state = .before_css_rule_name
-		return [CloseTagToken{
-			pos: t.pos
-		}]
+		t.state = .extern
+		defer {
+			t.tok_len = 0
+		}
+		return CSSRuleClose{
+			pos: t.pos - t.tok_len
+			len: t.tok_len
+		}
 	}
 
-	println('Invalid character before CSS rule name or tag name: ${r}')
-	return t.before_css_rule_name()
+	line, col := t.get_line_col()
+	return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}')
 }
 
-fn (mut t Tokenizer) css_rule_name() []Token {
-	r := t.consume() or {
-		return t.eof()
+fn (mut t Tokenizer) state__in_css_rule_name() !Token {
+	r := t.consume() or { return t.state__eof() }
+
+	if r in parser.newline {
+		line, col := t.get_line_col()
+		return error('Invalid EOL in CSSML (${t.state}) @${line}:${col}')
 	}
 
 	if r in parser.whitespace {
-		return t.css_rule_name()
+		line, col := t.get_line_col()
+		return error('Invalid whitespace in CSSML (${t.state}) @${line}:${col}')
 	}
 
-	if r in parser.alphahyphen {
-		t.str.write_rune(r)
-		return t.css_rule_name()
+	if r in parser.tag_name_chars {
+		t.buf.write_rune(r)
+		return t.state__in_css_rule_name()!
 	}
 
 	if r == `:` {
-		t.token = CSSRuleToken{
-			pos: t.pos
-			property: t.str.str()
+		t.token = CSSRule{
+			pos: t.pos - t.tok_len
+			name: t.reset_buf()
 		}
-		t.str = strings.new_builder(100)
-		t.state = .css_rule_value
-		return t.css_rule_value()
+		t.state = .in_css_rule_value
+		return t.state__in_css_rule_value()!
 	}
 
-	// if this appears, we're starting a new tag instead of a CSS rule.
-	// the function/state name should be updated to "css_rule_or_tag_name"
-	if r == `{` {
-		t.pos--
-		t.token = TagToken{
-			pos: t.pos
-			name: t.str.str()
-		}
-		t.state = .after_tag
-		t.str = strings.new_builder(100)
-		return [t.token]
-	}
-
-	if r == `#` {
-		t.token = TagToken{
-			pos: t.pos
-			name: t.str.str()
-		}
-		t.str = strings.new_builder(100)
-		t.state = .tag_id
-		return t.tag_id()
-	}
-
-	if r == `.` {
-		t.token = TagToken{
-			pos: t.pos
-			name: t.str.str()
-		}
-		t.str = strings.new_builder(100)
-		t.state = .tag_class
-		return t.tag_class()
-	}
-
-	if r == `$` {
-		t.token = TagToken{
-			pos: t.pos
-			name: t.str.str()
-		}
-		t.str = strings.new_builder(100)
-		t.state = .attribute_name
-		return t.attribute_name()
-	}
-
-	println('Invalid character in CSS rule name: ${r}')
-	t.str.write_rune(r)
-	return t.css_rule_name()
+	line, col := t.get_line_col()
+	println('here')
+	return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}')
 }
 
-fn (mut t Tokenizer) css_rule_value() []Token {
-	r := t.consume() or {
-		return t.eof()
-	}
-
-	if r in parser.whitespace {
-		return t.css_rule_value()
-	}
+fn (mut t Tokenizer) state__in_css_rule_value() !Token {
+	r := t.consume() or { return t.state__eof() }
 
 	if r == `;` {
-		mut rule := t.token as CSSRuleToken
-		rule.value = t.str.str()
-		t.str = strings.new_builder(100)
-		t.state = .before_css_rule_name
-		return [rule]
+		mut tok := t.token as CSSRule
+		tok.len = t.tok_len
+		t.tok_len = 0
+		tok.value = t.reset_buf()
+		t.state = t.return_state
+		return tok
 	}
 
-	t.str.write_rune(r)
-	return t.css_rule_value()
+	t.buf.write_rune(r)
+	return t.state__in_css_rule_value()!
 }
 
-fn (mut t Tokenizer) inner_text() []Token {
+fn (mut t Tokenizer) state__in_comment() Token {
 	r := t.consume() or {
-		return t.eof()
-	}
-
-	if r == `\\` {
-		if next := t.next() {
-			t.str.write_rune(next)
-			t.pos++
-		} else {
-			t.str.write_rune(r)
+		t.state = .eof
+		defer {
+			t.tok_len = 0
 		}
-		return t.inner_text()
-	}
-
-	if r == `}` {
-		t.state = .before_css_rule_name
-		t.token = TextToken{
-			pos: t.pos
-			text: t.str.str()
+		return CommentToken{
+			pos: t.pos - t.tok_len
+			len: t.tok_len
+			text: t.reset_buf()
 		}
-		t.str = strings.new_builder(100)
-		return [t.token]
 	}
 
-	t.str.write_rune(r)
-	return t.inner_text()
+	if r in parser.newline {
+		t.state = t.return_state
+		defer {
+			t.tok_len = 0
+		}
+		return CommentToken{
+			pos: t.pos - t.tok_len
+			len: t.tok_len - 1 // -1 for newline
+			text: t.reset_buf()
+		}
+	}
+
+	t.buf.write_rune(r)
+	return t.state__in_comment()
 }
 
-fn (mut t Tokenizer) eof() []Token {
-	t.state = .eof
-	return [Token(EOFToken(t.pos+1))]
+// https://infra.spec.whatwg.org/#noncharacter
+fn is_non_character(r rune) bool {
+	for i := 0xFDD0; i <= 0xFDEF; i++ {
+		if r == rune(i) {
+			return true
+		}
+	}
+
+	if r in [rune(0xFFFE), 0xFFFF, 0x1FFFE, 0x1FFFF, 0x2FFFE, 0x2FFFF, 0x3FFFE, 0x3FFFF, 0x4FFFE,
+		0x4FFFF, 0x5FFFE, 0x5FFFF, 0x6FFFE, 0x6FFFF, 0x7FFFE, 0x7FFFF, 0x8FFFE, 0x8FFFF, 0x9FFFE,
+		0x9FFFF, 0xAFFFE, 0xAFFFF, 0xBFFFE, 0xBFFFF, 0xCFFFE, 0xCFFFF, 0xDFFFE, 0xDFFFF, 0xEFFFE,
+		0xEFFFF, 0xFFFFE, 0xFFFFF, 0x10FFFE, 0x10FFFF] {
+		return true
+	}
+
+	return false
+}
+
+[direct_array_access]
+fn (t Tokenizer) get_line_col() (int, int) {
+	if t.pos < 0 || t.pos >= t.src_str.len {
+		return -1, -1
+	}
+
+	lines_up_to_pos := t.src_str[..t.pos + 1].split_into_lines()
+	line_no := lines_up_to_pos.len
+	col_no := lines_up_to_pos[lines_up_to_pos.len - 1].len
+	return line_no, col_no
 }

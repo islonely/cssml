@@ -1,33 +1,48 @@
+// styles applied outside the html tag will be treated as normal CSS.
+// For examples this following style applies to all ul elements.
+ul {
+	margin: 0;
+	text-align: center;
+}
+
 html {
-	head {
-		meta$charset(utf-8) {}
-		meta$name(viewport)$content(width=device-width, initial-scale=1) {}
-		title {{Home Page}}
+	> head {
+		> meta[charset="utf-8"]
+		> meta[name="viewport"][content="device-width, initial-scale=1.0"]
+		> title {"Home Page"}
 	}
-	body {
-		nav#mainNav {
-			[exclusive]
+	> body {
+		> nav#mainNav {
 			position: fixed;
 			top: 0;
 			left: 0;
+
+			li {
+				// this will apply to all li items in nav#mainNav, but it won't
+				// create a tag on the page like "> li {...}" does.
+				text-decoration: underline;
+			}
 			
-			ul {
-				li {
-					a#active.link$href(#) {
+			> ul {
+				> li {
+					> a#active.link[href="#"] {
+						[local]
 						font-weight: bold;
+						text-decoration: underline;
 						
-						{Home Page}
+						"Home Page"
 					}
-					a.link$href(somewhere_else.cssml) {
+					> a.link[href="somewhere_else.cssml"] {
 						border-radius: 5px;
 						box-shadow: 1px 1px 10px #aaa;
 					}
 				}
 			}
 			
-			input#search$type(text) {
+			> input#search[type="text"][name="search"] {
 				[attributes]
-				
+				outline: none;
+				padding: 5px;
 			}
 		}
 	}
