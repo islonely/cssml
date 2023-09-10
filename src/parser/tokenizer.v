@@ -1,25 +1,43 @@
 module parser
 
+import datatypes { Stack }
 import strings
+import term
 
 const (
 	newline        = '\n\f'.runes()
 	whitespace     = '\n\r\f\t '.runes()
 	hex            = '0123456789abcdefABCDEF'.runes()
-	tag_name_chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-'.runes()
+	query_sel_chars= 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-'.runes()
 	alpha          = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'.runes()
 	digits         = '0123456789'.runes()
 	replacement    = rune(0xfffd)
 )
 
 enum TokenizerState {
+	after_css_attr
+	after_css_attr_value
 	eof
 	extern
 	extern_after_query_selector
 	extern_in_css_block
 	in_comment
+	in_css_attr_name
+	in_css_attr_value_double_quoted
+	in_css_attr_value_single_quoted
+	in_css_attr_value_unquoted
+	in_css_class
+	in_css_id
+	in_css_pseudo_class
+	in_css_pseudo_element
 	in_css_rule_name
 	in_css_rule_value
+	start_css_attr
+	start_css_attr_value
+	start_css_class
+	start_css_id
+	start_css_pseudo_class
+	start_css_pseudo_element
 }
 
 struct Tokenizer {
@@ -29,7 +47,7 @@ mut:
 	pos          int
 	tok_len      int
 	state        TokenizerState  = .extern
-	return_state TokenizerState  = .extern
+	return_state Stack[TokenizerState]
 	buf          strings.Builder = strings.new_builder(100)
 	attr         string
 	inside_html  bool
@@ -37,6 +55,8 @@ mut:
 	token Token
 }
 
+// Tokenizer.new returns a new `Tokenizer` with the
+// supplied source.
 [inline]
 fn Tokenizer.new(src string) Tokenizer {
 	return Tokenizer{
@@ -45,11 +65,14 @@ fn Tokenizer.new(src string) Tokenizer {
 	}
 }
 
+// current returns the character at the current position
+// in the buffer.
 [inline]
 fn (t Tokenizer) current() rune {
 	return t.src[t.pos]
 }
 
+// next returns the next character in the buffer or `none`.
 [inline]
 fn (t Tokenizer) next() ?rune {
 	return if t.pos >= t.src.len {
@@ -59,6 +82,9 @@ fn (t Tokenizer) next() ?rune {
 	}
 }
 
+// consume returns the current character in the buffer or `none`.
+// It then moves the positition forward and increments the
+// token length.
 fn (mut t Tokenizer) consume() ?rune {
 	if t.pos >= t.src.len {
 		return none
@@ -69,15 +95,33 @@ fn (mut t Tokenizer) consume() ?rune {
 	return r
 }
 
+// emit_token returns a `Token` based on the current
+// `Tokenizer` state or an error.
 fn (mut t Tokenizer) emit_token() !Token {
 	return match t.state {
+		.after_css_attr { t.state__after_css_attr()! }
+		.after_css_attr_value { t.state__after_css_attr_value()! }
 		.eof { t.state__eof() }
 		.extern { t.state__extern()! }
 		.extern_after_query_selector { t.state__extern_after_query_selector()! }
 		.extern_in_css_block { t.state__extern_in_css_block()! }
-		.in_comment { t.state__in_comment() }
+		.in_comment { t.state__in_comment()! }
+		.in_css_attr_name { t.state__in_css_attr_name()! }
+		.in_css_attr_value_double_quoted { t.state__in_css_attr_value_double_quoted()! }
+		.in_css_attr_value_single_quoted { t.state__in_css_attr_value_single_quoted()! }
+		.in_css_attr_value_unquoted { t.state__in_css_attr_value_unquoted()! }
+		.in_css_class { t.state__in_css_class()! }
+		.in_css_id { t.state__in_css_id()! }
+		.in_css_pseudo_class { t.state__in_css_pseudo_class()! }
+		.in_css_pseudo_element { t.state__in_css_pseudo_element()! }
 		.in_css_rule_name { t.state__in_css_rule_name()! }
 		.in_css_rule_value { t.state__in_css_rule_value()! }
+		.start_css_attr { t.state__start_css_attr()! }
+		.start_css_attr_value { t.state__start_css_attr_value()! }
+		.start_css_class { t.state__start_css_class()! }
+		.start_css_id { t.state__start_css_id()! }
+		.start_css_pseudo_class { t.state__start_css_pseudo_class()! }
+		.start_css_pseudo_element { t.state__start_css_pseudo_element()! }
 	}
 }
 
@@ -112,7 +156,7 @@ fn (mut t Tokenizer) state__extern() !Token {
 			if next == `/` {
 				t.consume() or { panic('We just did t.next()?') }
 				t.state = .in_comment
-				t.return_state = .extern
+				t.return_state.push(TokenizerState.extern)
 				return t.state__in_comment()
 			}
 		}
@@ -122,29 +166,694 @@ fn (mut t Tokenizer) state__extern() !Token {
 		return t.state__extern()
 	}
 
-	if r in parser.tag_name_chars {
+	if r in parser.query_sel_chars {
 		t.buf.write_rune(r)
 		return t.state__extern()
 	}
 
-	if r in parser.whitespace {
-		if t.buf.bytestr() == 'html' {
-			return TagToken{
-				pos: t.pos - t.tok_len
-				len: t.tok_len - 1 // -1 for whitespace
-				name: 'html'
+	if r == `#` {
+		t.token = CSSRuleOpen{
+			pos: t.pos - t.tok_len
+			name: t.reset_buf()
+		}
+		t.state = .start_css_id
+		t.return_state.push(TokenizerState.extern_after_query_selector)
+		return t.state__start_css_id()!
+	}
+
+	if r == `.` {
+		t.token = CSSRuleOpen{
+			pos: t.pos - t.tok_len
+			name: t.reset_buf()
+		}
+		t.state = .start_css_class
+		t.return_state.push(TokenizerState.extern_after_query_selector)
+		return t.state__start_css_class()!
+	}
+
+	if r == `:` {
+		t.token = CSSRuleOpen{
+			pos: t.pos - t.tok_len
+			name: t.reset_buf()
+		}
+		t.return_state.push(TokenizerState.extern_after_query_selector)
+		if next := t.consume() {
+			if next == `:` {
+				t.state = .start_css_pseudo_element
+				return t.state__start_css_pseudo_element()!
 			}
+
+			t.buf.write_rune(next)
+			t.state = .start_css_pseudo_class
+			return t.state__start_css_pseudo_class()!
 		}
 
-		t.state = .extern_after_query_selector
-		defer {
-			t.tok_len = 0
-		}
-		return CSSRuleOpen{
+		line, col := t.get_line_col()
+		return error('Unexpected end of file in CSSML (${t.state}) @${line}:${col}')
+	}
+
+	if r == `[` {
+		t.token = CSSRuleOpen{
 			pos: t.pos - t.tok_len
-			len: t.tok_len - 1 // -1 for whitespace
-			query_selector: t.reset_buf()
+			name: t.reset_buf()
 		}
+		t.return_state.push(TokenizerState.extern_after_query_selector)
+		t.state = .start_css_attr
+		return t.state__start_css_attr()!
+	}
+
+	line, col := t.get_line_col()
+	return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}')
+}
+
+fn (mut t Tokenizer) state__start_css_attr() !Token {
+	r := t.consume() or { return t.state__eof() }
+
+	if r in parser.query_sel_chars {
+		t.buf.write_rune(r)
+		t.state = .in_css_attr_name
+		return t.state__in_css_attr_name()!
+	}
+
+	if r == `]` {
+		line, col := t.get_line_col()
+		return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS attribute ([attr_name="attr_value"]) cannot be empty.')
+	}
+
+	if r == `=` {
+		line, col := t.get_line_col()
+		return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS attribute ([attr_name="attr_value"]) missing name.')
+	}
+
+	line, col := t.get_line_col()
+	return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}')
+}
+
+fn (mut t Tokenizer) state__in_css_attr_name() !Token {
+	r := t.consume() or { return t.state__eof() }
+
+	if r in parser.query_sel_chars {
+		t.buf.write_rune(r)
+		return t.state__in_css_attr_name()!
+	}
+
+	if r == `]` {
+		mut tok := t.token as CSSRuleOpen
+		t.attr = t.reset_buf()
+		tok.attributes[t.attr] = none
+		t.token = tok
+		t.state = .after_css_attr
+		return t.state__after_css_attr()!
+	}
+
+	if r == `=` {
+		mut tok := t.token as CSSRuleOpen
+		t.attr = t.reset_buf()
+		tok.attributes[t.attr] = none
+		t.token = tok
+		t.state = .start_css_attr_value
+		return t.state__start_css_attr_value()!
+	}
+
+	if r in parser.whitespace {
+		line, col := t.get_line_col()
+		return error('Unexpected whitespace in CSSML (${t.state}) @${line}:${col}')
+	}
+
+	line, col := t.get_line_col()
+	return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS attribute ([attr_name="attr_value"]) missing value.')
+}
+
+fn (mut t Tokenizer) state__start_css_attr_value() !Token {
+	r := t.consume() or { return t.state__eof() }
+
+	if r == `"` {
+		t.state = .in_css_attr_value_double_quoted
+		return t.state__in_css_attr_value_double_quoted()!
+	}
+
+	if r == `'` {
+		t.state = .in_css_attr_value_single_quoted
+		return t.state__in_css_attr_value_single_quoted()!
+	}
+
+	if r == `]` {
+		line, col := t.get_line_col()
+		return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS attribute ([attr_name="attr_value"]) missing value.')
+	}
+
+	if r in parser.whitespace {
+		line, col := t.get_line_col()
+		return error('Unexpected whitespace in CSSML (${t.state}) @${line}:${col}')
+	}
+
+	t.buf.write_rune(r)
+	t.state = .in_css_attr_value_unquoted
+	return t.state__in_css_attr_value_unquoted()!
+}
+
+fn (mut t Tokenizer) state__in_css_attr_value_double_quoted() !Token {
+	r := t.consume() or { return t.state__eof() }
+
+	if r == `"` {
+		mut tok := t.token as CSSRuleOpen
+		tok.attributes[t.attr] = t.reset_buf()
+		t.token = tok
+		t.state = .after_css_attr_value
+		return t.state__after_css_attr_value()!
+	}
+
+	if r == `\\` {
+		if next := t.consume() {
+			t.buf.write_rune(r)
+			t.buf.write_rune(next)
+			return t.state__in_css_attr_value_double_quoted()!
+		}
+
+		line, col := t.get_line_col()
+		return error('Unexpected end of file in CSSML (${t.state}) @${line}:${col}')
+	}
+
+	t.buf.write_rune(r)
+	return t.state__in_css_attr_value_double_quoted()!
+}
+
+fn (mut t Tokenizer) state__in_css_attr_value_single_quoted() !Token {
+	r := t.consume() or { return t.state__eof() }
+
+	if r == `'` {
+		mut tok := t.token as CSSRuleOpen
+		tok.attributes[t.attr] = t.reset_buf()
+		t.token = tok
+		t.state = .after_css_attr_value
+		return t.state__after_css_attr_value()!
+	}
+
+	if r == `\\` {
+		if next := t.consume() {
+			t.buf.write_rune(r)
+			t.buf.write_rune(next)
+			return t.state__in_css_attr_value_single_quoted()!
+		}
+
+		line, col := t.get_line_col()
+		return error('Unexpected end of file in CSSML (${t.state}) @${line}:${col}')
+	}
+
+	t.buf.write_rune(r)
+	return t.state__in_css_attr_value_single_quoted()!
+}
+
+fn (mut t Tokenizer) state__in_css_attr_value_unquoted() !Token {
+	r := t.consume() or { return t.state__eof() }
+
+	if r in parser.whitespace {
+		line, col := t.get_line_col()
+		return error('Unexpected whitespace in CSSML (${t.state}) @${line}:${col}')
+	}
+
+	if r == `]` {
+		mut tok := t.token as CSSRuleOpen
+		tok.attributes[t.attr] = t.reset_buf()
+		t.token = tok
+		t.state = .after_css_attr
+		return t.state__after_css_attr()!
+	}
+
+	if r == `\\` {
+		if next := t.consume() {
+			if next == `]` {
+				line, col := t.get_line_col()
+				return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nUnquoted CSS attribute ([attr_name="attr_value"]) cannot contain a backslash (\\) followed by a closing bracket (]).')
+			}
+
+			t.buf.write_rune(r)
+			t.buf.write_rune(next)
+			return t.state__in_css_attr_value_unquoted()!
+		}
+
+		line, col := t.get_line_col()
+		return error('Unexpected end of file in CSSML (${t.state}) @${line}:${col}')
+	}
+
+	t.buf.write_rune(r)
+	return t.state__in_css_attr_value_unquoted()!
+}
+
+fn (mut t Tokenizer) state__after_css_attr_value() !Token {
+	r := t.consume() or { return t.state__eof() }
+
+	if r == `]` {
+		t.state = .after_css_attr
+		return t.state__after_css_attr()!
+	}
+
+	line, col := t.get_line_col()
+	return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}')
+}
+
+fn (mut t Tokenizer) state__after_css_attr() !Token {
+	r := t.consume() or { return t.state__eof() }
+
+	if r == `#` {
+		line, col := t.get_line_col()
+		return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS id (#id_name) must come before CSS attribute ([attr_name="attr_value"]).')
+	}
+
+	if r == `.` {
+		line, col := t.get_line_col()
+		return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS class (.class_name) must come before CSS attribute ([attr_name="attr_value"]).')
+	}
+
+	if r == `:` {
+		if next := t.consume() {
+			if next == `:` {
+				t.state = .start_css_pseudo_element
+				return t.state__start_css_pseudo_element()!
+			}
+
+			t.buf.write_rune(next)
+			t.state = .start_css_pseudo_class
+			return t.state__start_css_pseudo_class()!
+		}
+
+		line, col := t.get_line_col()
+		return error('Unexpected end of file in CSSML (${t.state}) @${line}:${col}')
+	}
+
+	if r == `[` {
+		t.state = .start_css_attr
+		return t.state__start_css_attr()!
+	}
+
+	if r in parser.whitespace {
+		t.state = t.return_state.pop()!
+		mut tok := t.token as CSSRuleOpen
+		tok.len = t.tok_len - 1 // -1 for whitespace
+		t.tok_len = 0
+		return tok
+	}
+
+	line, col := t.get_line_col()
+	return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}')
+}
+
+fn (mut t Tokenizer) state__start_css_pseudo_class() !Token {
+	r := t.consume() or { return t.state__eof() }
+
+	if r in parser.query_sel_chars {
+		t.buf.write_rune(r)
+		t.state = .in_css_pseudo_class
+		return t.state__in_css_pseudo_class()!
+	}
+
+	if r in parser.whitespace {
+		line, col := t.get_line_col()
+		return error('Unexpected whitespace in CSSML (${t.state}) @${line}:${col}')
+	}
+
+	line, col := t.get_line_col()
+	return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}')
+}
+
+fn (mut t Tokenizer) state__in_css_pseudo_class() !Token {
+	r := t.consume() or { return t.state__eof() }
+
+	if r in parser.query_sel_chars {
+		t.buf.write_rune(r)
+		return t.state__in_css_pseudo_class()!
+	}
+
+	if r == `(` {
+		t.buf.write_rune(r)
+		mut next := t.consume() or {
+			line, col := t.get_line_col()
+			return error('Unexpected end of file in CSSML (${t.state}) @${line}:${col}')
+		}
+		for {
+			if next in parser.query_sel_chars {
+				t.buf.write_rune(next)
+				next = t.consume() or {
+					line, col := t.get_line_col()
+					return error('Unexpected end of file in CSSML (${t.state}) @${line}:${col}')
+				}
+				continue
+			}
+
+			if next == `)` {
+				t.buf.write_rune(next)
+				mut tok := t.token as CSSRuleOpen
+				tok.pseudo.classes << t.reset_buf()
+				tok.len = t.tok_len - 1 // -1 for whitespace
+				t.tok_len = 0
+				t.state = t.return_state.pop()!
+				return tok
+			}
+		}
+	}
+
+	if r == `:` {
+		mut tok := t.token as CSSRuleOpen
+		tok.pseudo.classes << t.reset_buf()
+		t.token = tok
+		
+		if next := t.consume() {
+			if next == `:` {
+				t.state = .start_css_pseudo_element
+				return t.state__start_css_pseudo_element()!
+			}
+
+			t.buf.write_rune(next)
+			t.state = .start_css_pseudo_class
+			return t.state__start_css_pseudo_class()!
+		}
+
+		line, col := t.get_line_col()
+		return error('Unexpected end of file in CSSML (${t.state}) @${line}:${col}')
+	}
+
+	if r == `#` {
+		mut tok := t.token as CSSRuleOpen
+		tok.pseudo.classes << t.reset_buf()
+		t.token = tok
+		
+		line, col := t.get_line_col()
+		return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS pseudo class (:class_name) must come after CSS id (#id_name).')
+	}
+
+	if r == `.` {
+		mut tok := t.token as CSSRuleOpen
+		tok.pseudo.classes << t.reset_buf()
+		t.token = tok
+		
+		line, col := t.get_line_col()
+		return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS pseudo class (:class_name) must come after CSS class (.class_name).')
+	}
+
+	if r == `[` {
+		mut tok := t.token as CSSRuleOpen
+		tok.pseudo.classes << t.reset_buf()
+		t.token = tok
+		
+		line, col := t.get_line_col()
+		return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS pseudo class (:class_name) must come after CSS attribute ([attr_name="attr_value"]).')
+	}
+
+	if r in parser.whitespace {
+		mut tok := t.token as CSSRuleOpen
+		tok.pseudo.classes << t.reset_buf()
+		tok.len = t.tok_len - 1 // -1 for whitespace
+		t.tok_len = 0
+		t.state = t.return_state.pop()!
+		return tok
+	}
+
+	line, col := t.get_line_col()
+	return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}')
+}
+
+fn (mut t Tokenizer) state__start_css_pseudo_element() !Token {
+	r := t.consume() or { return t.state__eof() }
+
+	if r in parser.query_sel_chars {
+		t.buf.write_rune(r)
+		t.state = .in_css_pseudo_element
+		return t.state__in_css_pseudo_element()!
+	}
+
+	if r in parser.whitespace {
+		line, col := t.get_line_col()
+		return error('Unexpected whitespace in CSSML (${t.state}) @${line}:${col}')
+	}
+
+	line, col := t.get_line_col()
+	return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}')
+}
+
+fn (mut t Tokenizer) state__in_css_pseudo_element() !Token {
+	r := t.consume() or { return t.state__eof() }
+
+	if r in parser.query_sel_chars {
+		t.buf.write_rune(r)
+		return t.state__in_css_pseudo_class()!
+	}
+
+	if r == `:` {
+		mut tok := t.token as CSSRuleOpen
+		tok.pseudo.elements << t.reset_buf()
+		t.token = tok
+
+		if next := t.consume() {
+			if next == `:` {
+				line, col := t.get_line_col()
+				return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nOnly one pseudo element (::pseduo_element) can be used per CSS block.')
+			}
+
+			line, col := t.get_line_col()
+			return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS pseudo element (::pseduo_element) must come after CSS pseudo class (:class_name).')
+		}
+		
+		line, col := t.get_line_col()
+		return error('Unexpected end of file in CSSML (${t.state}) @${line}:${col}')
+	}
+
+	if r == `#` {
+		mut tok := t.token as CSSRuleOpen
+		tok.pseudo.elements << t.reset_buf()
+		t.token = tok
+		
+		line, col := t.get_line_col()
+		return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS pseudo element (::pseduo_element) must come after CSS id (#id_name).')
+	}
+
+	if r == `.` {
+		mut tok := t.token as CSSRuleOpen
+		tok.pseudo.elements << t.reset_buf()
+		t.token = tok
+		
+		line, col := t.get_line_col()
+		return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS pseudo element (::pseduo_element) must come after CSS class (.class_name).')
+	}
+
+	if r == `[` {
+		mut tok := t.token as CSSRuleOpen
+		tok.pseudo.elements << t.reset_buf()
+		t.token = tok
+		
+		line, col := t.get_line_col()
+		return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS pseudo element (::pseduo_element) must come after CSS attribute ([attr_name="attr_value"]).')
+	}
+
+	if r in parser.whitespace {
+		mut tok := t.token as CSSRuleOpen
+		tok.pseudo.elements << t.reset_buf()
+		tok.len = t.tok_len - 1 // -1 for whitespace
+		t.tok_len = 0
+		t.state = t.return_state.pop()!
+		return tok
+	}
+
+	line, col := t.get_line_col()
+	return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}')
+}
+
+fn (mut t Tokenizer) state__start_css_class() !Token {
+	r := t.consume() or { return t.state__eof() }
+
+	if r in parser.query_sel_chars {
+		t.buf.write_rune(r)
+		t.state = .in_css_class
+		return t.state__in_css_class()!
+	}
+
+	if r == `-` {
+		if next := t.consume() {
+			if next != `-` && next !in parser.digits {
+				t.buf.write_rune(r)
+				t.buf.write_rune(next)
+				t.state = .in_css_class
+				return t.state__in_css_class()!
+			}
+
+			line, col := t.get_line_col()
+			return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS class (.class_name) cannot start with a hyphen (-) followed by another hyphen or digit (0-9).')
+		}
+
+		line, col := t.get_line_col()
+		return error('Unexpected end of file in CSSML (${t.state}) @${line}:${col}')
+	}
+
+	if r >= `0` && r <= `9` {
+		line, col := t.get_line_col()
+		return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS class (.class_name) cannot start with a digit (0-9).')
+	}
+
+	line, col := t.get_line_col()
+	return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}')
+}
+
+fn (mut t Tokenizer) state__in_css_class() !Token {
+	r := t.consume() or { return t.state__eof() }
+
+	if r in parser.query_sel_chars {
+		t.buf.write_rune(r)
+		t.state = .in_css_class
+		return t.state__in_css_class()!
+	}
+
+	if r in parser.whitespace {
+		mut tok := t.token as CSSRuleOpen
+		tok.classes << t.reset_buf()
+		tok.len = t.tok_len - 1 // -1 for whitespace
+		t.tok_len = 0
+		t.state = t.return_state.pop()!
+		return tok
+	}
+
+	if r == `#` {
+		mut tok := t.token as CSSRuleOpen
+		tok.classes << t.reset_buf()
+		t.token = tok
+		
+		line, col := t.get_line_col()
+		return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS id (#id_name) must come before CSS class (.class_name).')
+	}
+
+	if r == `.` {
+		mut tok := t.token as CSSRuleOpen
+		tok.classes << t.reset_buf()
+		t.token = tok
+		t.state = .start_css_class
+		return t.state__start_css_class()!
+	}
+
+	if r == `:` {
+		mut tok := t.token as CSSRuleOpen
+		tok.classes << t.reset_buf()
+		t.token = tok
+		
+		if next := t.consume() {
+			if next == `:` {
+				t.state = .start_css_pseudo_element
+				return t.state__start_css_pseudo_element()!
+			}
+
+			t.buf.write_rune(next)
+			t.state = .start_css_pseudo_class
+			return t.state__start_css_pseudo_class()!
+		}
+
+		line, col := t.get_line_col()
+		return error('Unexpected end of file in CSSML (${t.state}) @${line}:${col}')
+	}
+
+	if r == `[` {
+		mut tok := t.token as CSSRuleOpen
+		tok.classes << t.reset_buf()
+		t.token = tok
+		t.state = .start_css_attr
+		return t.state__start_css_attr()!
+	}
+
+	line, col := t.get_line_col()
+	return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}')
+}
+
+fn (mut t Tokenizer) state__start_css_id() !Token {
+	r := t.consume() or { return t.state__eof() }
+
+	if r in parser.query_sel_chars {
+		t.buf.write_rune(r)
+		t.state = .in_css_id
+		return t.state__in_css_id()!
+	}
+
+	if r == `-` {
+		if next := t.consume() {
+			if next != `-` && next !in parser.digits {
+				t.buf.write_rune(r)
+				t.buf.write_rune(next)
+				t.state = .in_css_id
+				return t.state__in_css_id()!
+			}
+
+			line, col := t.get_line_col()
+			return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS id (#id_name) cannot start with a hyphen (-) followed by another hyphen or digit (0-9).')
+		}
+
+		line, col := t.get_line_col()
+		return error('Unexpected end of file in CSSML (${t.state}) @${line}:${col}')
+	}
+
+	if r >= `0` && r <= `9` {
+		line, col := t.get_line_col()
+		return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS id (#id_name) cannot start with a digit (0-9).')
+	}
+
+	line, col := t.get_line_col()
+	return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}')
+}
+
+fn (mut t Tokenizer) state__in_css_id() !Token {
+	r := t.consume() or { return t.state__eof() }
+
+	if r in parser.query_sel_chars {
+		t.buf.write_rune(r)
+		t.state = .in_css_id
+		return t.state__in_css_id()!
+	}
+
+	if r in parser.whitespace {
+		mut tok := t.token as CSSRuleOpen
+		tok.id = t.reset_buf()
+		tok.len = t.tok_len - 1 // -1 for whitespace
+		t.tok_len = 0
+		t.state = t.return_state.pop()!
+		return tok
+	}
+
+	if r == `#` {
+		mut tok := t.token as CSSRuleOpen
+		tok.id = t.reset_buf()
+		t.token = tok
+		line, col := t.get_line_col()
+		return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS id (#id_name) must be unique.')
+	}
+
+	if r == `.` {
+		mut tok := t.token as CSSRuleOpen
+		tok.id = t.reset_buf()
+		t.token = tok
+		t.state = .start_css_class
+		return t.state__start_css_class()!
+	}
+
+	if r == `:` {
+		mut tok := t.token as CSSRuleOpen
+		tok.id = t.reset_buf()
+		t.token = tok
+		
+		if next := t.consume() {
+			if next == `:` {
+				t.state = .start_css_pseudo_element
+				return t.state__start_css_pseudo_element()!
+			}
+
+			t.buf.write_rune(next)
+			t.state = .start_css_pseudo_class
+			return t.state__start_css_pseudo_class()!
+		}
+
+		line, col := t.get_line_col()
+		return error('Unexpected end of file in CSSML (${t.state}) @${line}:${col}')
+	}
+
+	if r == `[` {
+		mut tok := t.token as CSSRuleOpen
+		tok.id = t.reset_buf()
+		t.token = tok
+		t.state = .start_css_attr
+		return t.state__start_css_attr()!
 	}
 
 	line, col := t.get_line_col()
@@ -153,7 +862,6 @@ fn (mut t Tokenizer) state__extern() !Token {
 
 fn (mut t Tokenizer) state__extern_after_query_selector() !Token {
 	r := t.consume() or { return t.state__eof() }
-
 	if r in parser.whitespace {
 		return t.state__extern_after_query_selector()!
 	}
@@ -174,8 +882,8 @@ fn (mut t Tokenizer) state__extern_in_css_block() !Token {
 		return t.state__extern_in_css_block()!
 	}
 
-	if r in parser.tag_name_chars {
-		t.return_state = .extern_in_css_block
+	if r in parser.query_sel_chars {
+		t.return_state.push(TokenizerState.extern_in_css_block)
 		t.pos-- // reconsume as part of CSS rule name (--webkit-box-shadow)
 		t.state = .in_css_rule_name
 		return t.state__in_css_rule_name()!
@@ -209,7 +917,7 @@ fn (mut t Tokenizer) state__in_css_rule_name() !Token {
 		return error('Invalid whitespace in CSSML (${t.state}) @${line}:${col}')
 	}
 
-	if r in parser.tag_name_chars {
+	if r in parser.query_sel_chars {
 		t.buf.write_rune(r)
 		return t.state__in_css_rule_name()!
 	}
@@ -224,7 +932,6 @@ fn (mut t Tokenizer) state__in_css_rule_name() !Token {
 	}
 
 	line, col := t.get_line_col()
-	println('here')
 	return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}')
 }
 
@@ -236,7 +943,7 @@ fn (mut t Tokenizer) state__in_css_rule_value() !Token {
 		tok.len = t.tok_len
 		t.tok_len = 0
 		tok.value = t.reset_buf()
-		t.state = t.return_state
+		t.state = t.return_state.pop()!
 		return tok
 	}
 
@@ -244,7 +951,7 @@ fn (mut t Tokenizer) state__in_css_rule_value() !Token {
 	return t.state__in_css_rule_value()!
 }
 
-fn (mut t Tokenizer) state__in_comment() Token {
+fn (mut t Tokenizer) state__in_comment() !Token {
 	r := t.consume() or {
 		t.state = .eof
 		defer {
@@ -258,7 +965,7 @@ fn (mut t Tokenizer) state__in_comment() Token {
 	}
 
 	if r in parser.newline {
-		t.state = t.return_state
+		t.state = t.return_state.pop()!
 		defer {
 			t.tok_len = 0
 		}

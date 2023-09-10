@@ -57,7 +57,15 @@ struct CSSRuleOpen {
 mut:
 	pos            int
 	len            int
-	query_selector string
+	name string
+	id string
+	classes []string = []string{cap: 10}
+	attributes map[string]?string
+	pseudo struct {
+	mut:
+		classes []string = []string{cap: 5}
+		elements []string = []string{cap: 1}
+	}
 }
 
 struct CSSRule {

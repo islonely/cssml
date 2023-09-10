@@ -1,9 +1,33 @@
 // styles applied outside the html tag will be treated as normal CSS.
 // For examples this following style applies to all ul elements.
-ul {
+ul#someID {
 	margin: 0;
 	text-align: center;
 }
+
+ul::before {
+	content: "something";
+	border: 1px solid black;
+	border-radius: 5px;
+}
+
+li.ulItem {
+	padding: 5px 10px;
+	border-radius: 5px;
+	font-size: 11pt;
+}
+
+li#firstItem.ulItem {
+	text-decoration: underline;
+}
+
+li.ulItem:hover {
+	font-size: 14pt;
+}
+
+li[id="awesome_list_item"] {}
+.multiple.classes.without.tag.name {}
+#id[required]:link:visited {}
 
 html {
 	> head {
