@@ -35,9 +35,9 @@ html {
 	background: red;
 
 	> head {
-		> meta[charset="utf-8"]
-		> meta[name="viewport"][content="device-width, initial-scale=1.0"]
-		> title {"Home Page"}
+		> meta[charset="utf-8"] {}
+		> meta[name="viewport"][content="device-width, initial-scale=1.0"] {}
+		> title {"Dwayne \"The Rock\" Johnson"}
 	}
 	> body {
 		> nav#mainNav {
@@ -54,6 +54,8 @@ html {
 			> ul {
 				> li {
 					> a#active.link[href="#"] {
+						// [local] means that these styles only apply to this item.
+						// It's the same as using the <some-tag style="font-weight: bold; text-decoration: underline;">
 						[local]
 						font-weight: bold;
 						text-decoration: underline;
@@ -70,9 +72,16 @@ html {
 			}
 			
 			> input#search[type="text"][name="search"] {
+				// [attributes] means that this style rule applies to tags with these attributes
 				[attributes]
 				outline: none;
 				padding: 5px;
+				// applies to tags with this id and class
+				[id; class]
+				// applies to tags with this attribute.
+				[attribute('name', 'val')]
+				// applies to tags with this attribute that has no value.
+				[attribute('readonly')]
 			}
 		}
 	}

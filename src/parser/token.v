@@ -11,45 +11,27 @@ interface Locatable {
 type Token = CSSRule
 	| CSSRuleClose
 	| CSSRuleOpen
-	| CloseTagToken
 	| CommentToken
 	| EOFToken
-	| StyleAttributeToken
-	| TagToken
-	| TextToken
+	| CSSMLAttribute
+	| InnerTextToken
 
-// TagToken represents an HTML tag: <html>
-struct TagToken {
-mut:
-	pos        int
-	len        int
-	name       string
-	attributes map[string]string
-	id         string
-	class      []string
-}
 
-// CloseTagToken represents an HTML end tag: </html>
-struct CloseTagToken {
-mut:
-	pos int
-	len int
-}
-
-// TextToken represents a string of text.
-struct TextToken {
+// InnerTextToken represents a string of text.
+struct InnerTextToken {
 mut:
 	pos  int
 	len  int
 	text string
 }
 
-// StyleAttributeToken represents a CSSML style attribute: [local]
-struct StyleAttributeToken {
+// CSSAttribute represents a CSSML style attribute: [local], [id; class], etc.
+struct CSSMLAttribute {
 mut:
 	pos  int
 	len  int
 	name string
+	vals []string = []string{cap: 10}
 }
 
 // CSSRuleOpen represents 'div#id.class {'
