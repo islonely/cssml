@@ -57,6 +57,7 @@ struct CSSRuleOpen {
 mut:
 	pos            int
 	len            int
+	direct_child bool
 	name string
 	id string
 	classes []string = []string{cap: 10}

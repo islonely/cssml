@@ -17,11 +17,13 @@ const (
 enum TokenizerState {
 	after_css_attr
 	after_css_attr_value
+	after_query_selector
 	eof
 	extern
 	extern_after_query_selector
 	extern_in_css_block
 	in_comment
+	in_css_block
 	in_css_attr_name
 	in_css_attr_value_double_quoted
 	in_css_attr_value_single_quoted
@@ -32,6 +34,7 @@ enum TokenizerState {
 	in_css_pseudo_element
 	in_css_rule_name
 	in_css_rule_value
+	in_query_selector
 	start_css_attr
 	start_css_attr_value
 	start_css_class
@@ -101,11 +104,13 @@ fn (mut t Tokenizer) emit_token() !Token {
 	return match t.state {
 		.after_css_attr { t.state__after_css_attr()! }
 		.after_css_attr_value { t.state__after_css_attr_value()! }
+		.after_query_selector { t.state__after_query_selector()! }
 		.eof { t.state__eof() }
 		.extern { t.state__extern()! }
 		.extern_after_query_selector { t.state__extern_after_query_selector()! }
 		.extern_in_css_block { t.state__extern_in_css_block()! }
 		.in_comment { t.state__in_comment()! }
+		.in_css_block { t.state__in_css_block()! }
 		.in_css_attr_name { t.state__in_css_attr_name()! }
 		.in_css_attr_value_double_quoted { t.state__in_css_attr_value_double_quoted()! }
 		.in_css_attr_value_single_quoted { t.state__in_css_attr_value_single_quoted()! }
@@ -116,6 +121,7 @@ fn (mut t Tokenizer) emit_token() !Token {
 		.in_css_pseudo_element { t.state__in_css_pseudo_element()! }
 		.in_css_rule_name { t.state__in_css_rule_name()! }
 		.in_css_rule_value { t.state__in_css_rule_value()! }
+		.in_query_selector { t.state__in_query_selector()! }
 		.start_css_attr { t.state__start_css_attr()! }
 		.start_css_attr_value { t.state__start_css_attr_value()! }
 		.start_css_class { t.state__start_css_class()! }
@@ -139,6 +145,17 @@ fn (mut t Tokenizer) buf() string {
 	return t.buf.bytestr()
 }
 
+// index_any_after returns the index and character of any of the supplied
+// characters after the current position in the source or `none`.
+fn (t Tokenizer) index_any_after(chars string) ?(int, rune) {
+	for i, character in t.src[t.pos..] {
+		if character in chars.runes() {
+			return i, character
+		}
+	}
+	return none
+}
+
 // state__eof returns an EOFToken (end-of-file) set to the current tokenizer position.
 [inline]
 fn (mut t Tokenizer) state__eof() Token {
@@ -148,8 +165,42 @@ fn (mut t Tokenizer) state__eof() Token {
 	}
 }
 
+fn (mut t Tokenizer) state__after_query_selector() !Token {
+	r := t.consume() or { return t.state__eof() }
+
+	if r == `{` {
+		t.state = .in_css_block
+		return t.state__in_css_block()!
+	}
+
+	if r in parser.whitespace {
+		return t.state__after_query_selector()
+	}
+
+	line, col := t.get_line_col()
+	return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS block ({}) must come after CSS query selector (html, body, etc.).')
+}
+
 fn (mut t Tokenizer) state__extern() !Token {
 	r := t.consume() or { return t.state__eof() }
+
+	if r in parser.whitespace && t.buf.len > 0 {
+		defer {
+			t.tok_len = 0
+		}
+		t.token = CSSRuleOpen{
+			pos: t.pos - t.tok_len
+			len: t.tok_len - 1 // -1 for whitespace
+			name: t.reset_buf()
+		}
+
+		if (t.token as CSSRuleOpen).name == 'html' {
+			t.state = .after_query_selector
+		} else {
+			t.state = .extern_after_query_selector
+		}
+		return t.token
+	}
 
 	if r == `/` {
 		if next := t.next() {
@@ -162,7 +213,7 @@ fn (mut t Tokenizer) state__extern() !Token {
 		}
 	}
 
-	if r in parser.newline {
+	if r in parser.whitespace {
 		return t.state__extern()
 	}
 
@@ -891,6 +942,206 @@ fn (mut t Tokenizer) state__extern_in_css_block() !Token {
 
 	if r == `}` {
 		t.state = .extern
+		defer {
+			t.tok_len = 0
+		}
+		return CSSRuleClose{
+			pos: t.pos - t.tok_len
+			len: t.tok_len
+		}
+	}
+
+	line, col := t.get_line_col()
+	return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}')
+}
+
+fn (mut t Tokenizer) state__in_query_selector() !Token {
+	r := t.consume() or { return t.state__eof() }
+
+	if r in parser.whitespace {
+		if t.buf.len > 0 {
+			mut tok := t.token as CSSRuleOpen
+			tok.name = t.reset_buf()
+			t.token = tok
+			t.state = .after_query_selector
+			return t.token
+		}
+
+		return t.state__in_query_selector()!
+	}
+
+	if r == `#` {
+		mut tok := t.token as CSSRuleOpen
+		if tok.classes.len > 0 {
+			line, col := t.get_line_col()
+			return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS id (#id_name) must come before CSS class (.class_name).')
+		}
+
+		if tok.id.len > 0 {
+			line, col := t.get_line_col()
+			return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nOnly one CSS id (#id_name) can be used per CSS block.')
+		}
+
+		if tok.pseudo.classes.len > 0 {
+			line, col := t.get_line_col()
+			return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS id (#id_name) must come before CSS pseudo class (:class_name).')
+		}
+
+		if tok.pseudo.elements.len > 0 {
+			line, col := t.get_line_col()
+			return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS id (#id_name) must come before CSS pseudo element (::pseduo_element).')
+		}
+
+		if tok.attributes.len > 0 {
+			line, col := t.get_line_col()
+			return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS id (#id_name) must come before CSS attribute ([attr_name="attr_value"]).')
+		}
+
+		tok.name = t.reset_buf()
+		t.token = tok
+		t.state = .start_css_id
+		return t.state__start_css_id()!
+	}
+
+	if r == `.` {
+		mut tok := t.token as CSSRuleOpen
+		if tok.pseudo.classes.len > 0 {
+			line, col := t.get_line_col()
+			return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS class (.class_name) must come before CSS pseudo class (:class_name).')
+		}
+
+		if tok.pseudo.elements.len > 0 {
+			line, col := t.get_line_col()
+			return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS class (.class_name) must come before CSS pseudo element (::pseduo_element).')
+		}
+
+		if tok.attributes.len > 0 {
+			line, col := t.get_line_col()
+			return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS class (.class_name) must come before CSS attribute ([attr_name="attr_value"]).')
+		}
+
+		tok.name = t.reset_buf()
+		t.token = tok
+		t.state = .start_css_class
+		return t.state__start_css_class()!
+	}
+
+	if r == `[` {
+		mut tok := t.token as CSSRuleOpen
+		if tok.pseudo.classes.len > 0 {
+			line, col := t.get_line_col()
+			return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS attribute ([attr_name="attr_value"]) must come before CSS pseudo class (:class_name).')
+		}
+
+		if tok.pseudo.elements.len > 0 {
+			line, col := t.get_line_col()
+			return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}\nCSS attribute ([attr_name="attr_value"]) must come before CSS pseudo element (::pseduo_element).')
+		}
+
+		tok.name = t.reset_buf()
+		t.token = tok
+		t.state = .start_css_attr
+		return t.state__start_css_attr()!
+	}
+
+	if r == `:` {
+		if next := t.consume() {
+			mut tok := t.token as CSSRuleOpen
+			tok.name = t.reset_buf()
+			if next == `:` {
+				t.token = tok
+				t.state = .start_css_pseudo_element
+				return t.state__start_css_pseudo_element()!
+			}
+
+			t.buf.write_rune(next)
+			t.token = tok
+			t.state = .start_css_pseudo_class
+			return t.state__start_css_pseudo_class()!
+		}
+
+		line, col := t.get_line_col()
+		return error('Unexpected end of file in CSSML (${t.state}) @${line}:${col}')
+	}
+
+	t.buf.write_rune(r)
+	return t.state__in_query_selector()!
+}
+
+fn (mut t Tokenizer) state__in_css_block() !Token {
+	r := t.consume() or { return t.state__eof() }
+
+	if r == `/` {
+		if next := t.consume() {
+			if next == `/` {
+				t.state = .in_comment
+				t.return_state.push(TokenizerState.in_css_block)
+				return t.state__in_comment()!
+			}
+		}
+		
+		line, col := t.get_line_col()
+		return error('Invalid character in CSSML (${t.state}): "${r}" @${line}:${col}')
+	}
+
+	if r == `>` {
+		t.token = CSSRuleOpen{
+			pos: t.pos - t.tok_len
+			direct_child: true
+		}
+		t.state = .in_query_selector
+		t.return_state.push(TokenizerState.in_css_block)
+		return t.state__in_query_selector()!
+	}
+
+	if r in parser.whitespace {
+		return t.state__in_css_block()!
+	}
+
+	// CSS rule (background-color: red;) starts with the same characters as a query selector (div#id.class[attr="value"])
+	// so we need to check if this is a CSS rule or a query selector.
+	if r in parser.query_sel_chars {
+		t.buf.write_rune(r)
+		if _, find_out_if_this_is_css_rule_or_query_selector := t.index_any_after(':{') {
+			// CSS query selector (div#id.class[attr="value"]) may contain a colon (:) for pseudo classes and elements.
+			// So we need to check if this is the beginning of a pseudo class or element or the end of a CSS rule name.
+			if find_out_if_this_is_css_rule_or_query_selector == `:` {
+				if _, find_out_if_this_is_end_of_css_rule_name_or_start_of_psuedo_class := t.index_any_after(';{') {
+					if find_out_if_this_is_end_of_css_rule_name_or_start_of_psuedo_class == `;` {
+						t.return_state.push(TokenizerState.in_css_block)
+						t.state = .in_css_rule_name
+						return t.state__in_css_rule_name()!
+					}
+
+					//if find_out_if_this_is_end_of_css_rule_name_or_start_of_psuedo_class == `{` {
+					t.token = CSSRuleOpen{
+						pos: t.pos - t.tok_len
+					}
+					t.state = .in_query_selector
+					t.return_state.push(TokenizerState.in_css_block)
+					return t.state__in_query_selector()!
+					//}
+				}
+
+				line, col := t.get_line_col()
+				return error('Unexpected end of file in CSSML (${t.state}) @${line}:${col}')
+			}
+
+			//if find_out_if_this_is_css_rule_or_query_selector == `{` {
+			t.token = CSSRuleOpen{
+				pos: t.pos - t.tok_len
+			}
+			t.state = .in_query_selector
+			return t.state__in_query_selector()!
+			//}
+		}
+
+		line, col := t.get_line_col()
+		return error('Unexpected end of file in CSSML (${t.state}) @${line}:${col}')
+	}
+
+	if r == `}` {
+		t.state = .eof
 		defer {
 			t.tok_len = 0
 		}

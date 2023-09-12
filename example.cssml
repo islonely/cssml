@@ -28,8 +28,12 @@ li.ulItem:hover {
 li[id="awesome_list_item"] {}
 .multiple.classes.without.tag.name {}
 #id[required]:link:visited {}
+[type='number'][placeholder='phone number'][required] {}
+tag.class1.class2.class3::before {}
 
 html {
+	background: red;
+
 	> head {
 		> meta[charset="utf-8"]
 		> meta[name="viewport"][content="device-width, initial-scale=1.0"]
@@ -59,6 +63,8 @@ html {
 					> a.link[href="somewhere_else.cssml"] {
 						border-radius: 5px;
 						box-shadow: 1px 1px 10px #aaa;
+
+						"Another Page"
 					}
 				}
 			}
