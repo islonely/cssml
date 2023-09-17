@@ -2,7 +2,6 @@ module parser
 
 import datatypes { Stack }
 import strings
-import term
 
 const (
 	newline        = '\n\f'.runes()
@@ -61,6 +60,7 @@ mut:
 	buf          strings.Builder = strings.new_builder(100)
 	attr         string
 	inside_html  bool
+	is_open_css_rule_also_a_tag []bool = []bool{cap: 250}
 	// current Token being modified
 	token Token
 }
@@ -415,8 +415,11 @@ fn (mut t Tokenizer) state__extern() !Token {
 		}
 
 		if (t.token as CSSRuleOpen).name == 'html' {
+			t.inside_html = true
+			t.is_open_css_rule_also_a_tag << true
 			t.state = .after_query_selector
 		} else {
+			t.is_open_css_rule_also_a_tag << false
 			t.state = .extern_after_query_selector
 		}
 		return t.token
@@ -443,6 +446,12 @@ fn (mut t Tokenizer) state__extern() !Token {
 	}
 
 	if r == `#` {
+		if t.buf.bytestr() == 'html' {
+			t.inside_html = true
+			t.is_open_css_rule_also_a_tag << true
+		} else {
+			t.is_open_css_rule_also_a_tag << false
+		}
 		t.token = CSSRuleOpen{
 			pos: t.pos - t.tok_len
 			name: t.reset_buf()
@@ -453,6 +462,12 @@ fn (mut t Tokenizer) state__extern() !Token {
 	}
 
 	if r == `.` {
+		if t.buf.bytestr() == 'html' {
+			t.inside_html = true
+			t.is_open_css_rule_also_a_tag << true
+		} else {
+			t.is_open_css_rule_also_a_tag << false
+		}
 		t.token = CSSRuleOpen{
 			pos: t.pos - t.tok_len
 			name: t.reset_buf()
@@ -463,6 +478,12 @@ fn (mut t Tokenizer) state__extern() !Token {
 	}
 
 	if r == `:` {
+		if t.buf.bytestr() == 'html' {
+			t.inside_html = true
+			t.is_open_css_rule_also_a_tag << true
+		} else {
+			t.is_open_css_rule_also_a_tag << false
+		}
 		t.token = CSSRuleOpen{
 			pos: t.pos - t.tok_len
 			name: t.reset_buf()
@@ -484,6 +505,12 @@ fn (mut t Tokenizer) state__extern() !Token {
 	}
 
 	if r == `[` {
+		if t.buf.bytestr() == 'html' {
+			t.inside_html = true
+			t.is_open_css_rule_also_a_tag << true
+		} else {
+			t.is_open_css_rule_also_a_tag << false
+		}
 		t.token = CSSRuleOpen{
 			pos: t.pos - t.tok_len
 			name: t.reset_buf()
@@ -1158,6 +1185,7 @@ fn (mut t Tokenizer) state__extern_in_css_block() !Token {
 		t.return_state.push(TokenizerState.extern_in_css_block)
 		t.pos-- // reconsume as part of CSS rule name (box-shadow)
 		t.state = .in_css_rule_name
+		t.is_open_css_rule_also_a_tag << false
 		return t.state__in_css_rule_name()!
 	}
 
@@ -1315,6 +1343,7 @@ fn (mut t Tokenizer) state__in_css_block() !Token {
 			pos: t.pos - t.tok_len
 			direct_child: true
 		}
+		t.is_open_css_rule_also_a_tag << true
 		t.state = .in_query_selector
 		t.return_state.push(TokenizerState.in_css_block)
 		return t.state__in_query_selector()!
@@ -1358,6 +1387,7 @@ fn (mut t Tokenizer) state__in_css_block() !Token {
 					t.token = CSSRuleOpen{
 						pos: t.pos - t.tok_len
 					}
+					t.is_open_css_rule_also_a_tag << false
 					t.state = .in_query_selector
 					t.return_state.push(TokenizerState.in_css_block)
 					return t.state__in_query_selector()!
@@ -1390,6 +1420,11 @@ fn (mut t Tokenizer) state__in_css_block() !Token {
 		return CSSRuleClose{
 			pos: t.pos - t.tok_len
 			len: t.tok_len
+			is_also_tag_close: if t.is_open_css_rule_also_a_tag.len > 0 {
+				t.is_open_css_rule_also_a_tag.pop()
+			} else {
+				return error('CSSML: t.is_open_css_rule_also_a_tag.len == 0')
+			}
 		}
 	}
 

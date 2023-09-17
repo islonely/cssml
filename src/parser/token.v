@@ -1,5 +1,7 @@
 module parser
 
+import strings
+
 // Locatable is something that can be found in the source
 // rune array.
 interface Locatable {
@@ -51,6 +53,75 @@ mut:
 	}
 }
 
+// QuerySelectorParams is a struct that can be passed to
+// CSSRuleOpen.query_selector to determine which parts of the
+// selector string to include.
+[params]
+struct QuerySelectorParams {
+	name bool
+	id bool
+	classes bool
+	attributes bool
+	pseudo struct {
+		classes bool
+		elements bool
+	}
+}
+
+// QuerySelectorParams.all returns a QuerySelectorParams with all fields set to true.
+[inline]
+fn QuerySelectorParams.all() QuerySelectorParams {
+	return QuerySelectorParams{
+		name: true,
+		id: true,
+		classes: true,
+		attributes: true,
+		pseudo: struct {
+			classes: true,
+			elements: true,
+		},
+	}
+}
+
+// query_selector returns a CSS selector string for the rule.
+fn (rule_open CSSRuleOpen) query_selector(params QuerySelectorParams) string {
+	mut qs := strings.new_builder(200)
+	qs.write_string(if rule_open.direct_child { '> ' } else { '' })
+	if params.name {
+		qs.write_string(rule_open.name)
+	}
+	if params.id && rule_open.id.len > 0 {
+		qs.write_string('#${rule_open.id}')
+	}
+	if params.classes {
+		for class in rule_open.classes {
+			qs.write_string('.${class}')
+		}
+	}
+	if params.attributes {
+		for attr_name, opt_attr_val in rule_open.attributes {
+			qs.write_string('[')
+			qs.write_string(attr_name)
+			if attr_val := opt_attr_val {
+				qs.write_string('=')
+				qs.write_string('"${attr_val}"')
+			}
+			qs.write_string(']')
+		}
+	}
+	if params.pseudo.classes {
+		for pseudo_class in rule_open.pseudo.classes {
+			qs.write_string(':${pseudo_class}')
+		}
+	}
+	if params.pseudo.elements {
+		for pseudo_element in rule_open.pseudo.elements {
+			qs.write_string('::${pseudo_element}')
+		}
+	}
+	return qs.str()
+}
+
 struct CSSRule {
 mut:
 	pos   int
@@ -64,6 +135,7 @@ struct CSSRuleClose {
 mut:
 	pos int
 	len int
+	is_also_tag_close bool
 }
 
 // CommentToken represents an HTML comment.

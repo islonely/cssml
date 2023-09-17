@@ -14,4 +14,6 @@ fn main() {
 		eprintln(term.bright_red('error: ') + err.msg())
 		exit(1)
 	}
+	// println(p.global_css)
+	println(p.tree.html())
 }
