@@ -29,11 +29,11 @@ pub fn Parser.new(src string) Parser {
 // parse parses the source CSSML and stores the result in the Parser's tree.
 pub fn (mut p Parser) parse() ! {
 	mut tok := p.tokenizer.emit_token()!
-	println(term.bright_blue('[Tokenization]'))
+	// println(term.bright_blue('[Tokenization]'))
 	for tok !is EOFToken {
 		// println(tok)
 		tok = p.tokenizer.emit_token()!
-		println(tok)
+		// println(tok)
 
 		match mut tok {
 			CommentToken {
@@ -56,6 +56,12 @@ pub fn (mut p Parser) parse() ! {
 				if tok.name == 'html' || (tok.direct_child && p.in_html) {
 					p.in_html = true
 					mut this_tag := &ast.Tag{name: tok.name}
+					if this_tag.name == 'head' {
+						p.tree.head = this_tag
+					} else if this_tag.name == 'body' {
+						p.tree.body = this_tag
+					}
+
 					if p.open_tags.len > 0 {
 						mut last := p.open_tags[p.open_tags.len - 1]
 						last.children << this_tag
@@ -109,5 +115,7 @@ pub fn (mut p Parser) parse() ! {
 			else {}
 		}
 	}
-	println(tok.type_name())
+	// println(tok.type_name())
+	p.tree.global_css = p.global_css
+	p.global_css.clear()
 }

@@ -12,12 +12,38 @@ __global:
 	inner_text ?string
 	comments   []Comment = []Comment{cap: 10}
 	// This is the CSS that is added to the end of the <head> tag.
-	primary_css []&CSS  = []&CSS{cap: 15}
+	global_css []&CSS  = []&CSS{cap: 100}
 	children    []&Node = []&Node{cap: 15}
+	head ?&Tag
+	body ?&Tag
 }
 
 // html returns the HTML string representation of the tree.
 pub fn (tree Tree) html() string {
+	if mut head := tree.head {
+		head.children << &Tag {
+			name: 'style',
+			// should be able to do this, but "css.str()" returns the reference address
+			// When a reference invokes it's .str() method it prefaces the string value
+			// with a `&` character; thus the `1..`.
+			inner_text: tree.global_css.map(|css| css.str()[1..]).join('\n')
+			attributes: [
+				Attribute {
+					name: 'type',
+					value: 'text/css',
+				},
+			],
+		}
+	} else {
+		eprintln('error: no <head> tag found in the CSSML file.')
+		exit(1)
+	}
+
+	_ := tree.body or {
+		eprintln('error: no <body> tag found in the CSSML file.')
+		exit(1)
+	}
+
 	mut builder := strings.new_builder(2500)
 	
 	if tree.comments.len > 0 {
