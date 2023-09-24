@@ -10,17 +10,73 @@
 			Dwayne \"The Rock\" Johnson
 		</title>
 		<style type="text/css">
-			f6145b93dc0
-			f6145b93c60
-			f6145b93b00
-			f6145b939a0
-			f6145b93840
-			f6145b936e0
-			f6145b93580
-			f6145b93420
-			f6145b932c0
-			f6145b93160
-			f6145b71e70
+			ul#someID {
+				margin: 0;
+				text-align: center;
+			}
+			
+			ul::before {
+				content: "something";
+				border: 1px solid black;
+				border-radius: 5px;
+			}
+			
+			li.ulItem {
+				padding: 5px 10px;
+				border-radius: 5px;
+				font-size: 11pt;
+			}
+			
+			li#firstItem.ulItem {
+				text-decoration: underline;
+			}
+			
+			li.ulItem:hover {
+				font-size: 14pt;
+			}
+			
+			li[id="awesome_list_item"] {}
+			
+			.multiple.classes.without.tag.name {}
+			
+			#id[required]:link:visited {}
+			
+			[type="number"][placeholder="phone number"][required] {}
+			
+			tag.class1.class2.class3::before {}
+			
+			html {
+				background: red;
+			
+				> head {
+					> meta[charset="utf-8"] {		}
+					> meta[name="viewport"][content="device-width, initial-scale=1.0"] {		}
+					> title {		}
+				}
+				> body {
+					> nav#mainNav {
+						position: fixed;
+						top: 0;
+						left: 0;
+			
+						li {
+							text-decoration: underline;
+						}
+						> ul {
+							> li {
+								> a.link[href="somewhere_else.cssml"] {
+									border-radius: 5px;
+									box-shadow: 1px 1px 10px #aaa;
+								}
+							}
+						}
+						> input#search[type="text"][name="search"] {
+							outline: none;
+							padding: 5px;
+						}
+					}
+				}
+			}
 		</style>
 	</head>
 	<body>
@@ -34,7 +90,7 @@
 				<!--CSSML--
 					css// It's the same as using the <some-tag style="font-weight: bold; text-decoration: underline;">
 				-->
-				<a id="active" class="link " href="#">
+				<a id="active" class="link " href="#" style="font-weight: bold; text-decoration: underline;">
 					Home Page
 				</a>
 				<a class="link " href="somewhere_else.cssml">

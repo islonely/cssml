@@ -27,7 +27,7 @@ mut:
 	text string
 }
 
-// CSSAttribute represents a CSSML style attribute: [local], [id; class], etc.
+// CSSMLAttribute represents a CSSML style attribute: [local], [id; class], etc.
 struct CSSMLAttribute {
 mut:
 	pos  int

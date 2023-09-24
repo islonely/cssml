@@ -10,10 +10,11 @@ struct Parser {
 pub mut:
 	tokenizer Tokenizer
 	in_html bool
-	current_styles strings.Builder = strings.new_builder(1000)
+	current_styles strings.Builder = strings.new_builder(2500)
 	css_mode ast.CSSMode = .global
 	global_css []&ast.CSS = []&ast.CSS{cap: 100}
 	css_stack []&ast.CSS = []&ast.CSS{cap: 100}
+	attributes []CSSMLAttribute = []CSSMLAttribute{cap: 100}
 	tree &ast.Tree = &ast.Tree{}
 	open_tags []&ast.Tag = []&ast.Tag{cap: 100}
 }
@@ -94,25 +95,80 @@ pub fn (mut p Parser) parse() ! {
 				last.rules[tok.name] = tok.value
 			}
 			CSSRuleClose {
-				if tok.is_also_tag_close {
-					if p.open_tags.len > 0 {
-						p.open_tags.pop()
-					} else {
-						return error('Invalid token: ${tok}')
+				css_to_insert := p.css_stack[p.css_stack.len - 1] or {
+					return error('unexpected token: ${tok}')
+				}
+				p.css_stack.pop()
+				insert_css := fn [css_to_insert, mut p, tok] () ! {
+					if p.css_stack.len == 0 {
+						p.global_css << css_to_insert
+						return
 					}
+
+					mut parent_css := p.css_stack[p.css_stack.len - 1] or {
+						return error('unexpected token: ${tok}')
+					}
+					parent_css.embedded << css_to_insert
 				}
-				if p.css_stack.len == 0 {
-					return error('Invalid token: ${tok}')
+
+				if tok.is_also_tag_close {
+					mut last_tag := p.open_tags[p.open_tags.len - 1] or {
+						return error('unexpected token: ${tok}')
+					}
+					p.open_tags.pop()
+
+					if last_tag.cssml_attributes.len > 0 {
+						attrib := last_tag.cssml_attributes.last()
+						match attrib.name {
+							'local' {
+								last_tag.attributes << ast.Attribute{
+									name: 'style',
+									value: css_to_insert.inline_rules()
+								}
+							}
+							else {
+								insert_css()!
+								println(term.bright_blue('[${attrib.name}]'))
+							}
+						}
+						continue
+					}
+					insert_css()!
+				} else {
+					insert_css()!
 				}
-				if p.css_stack.len == 1 {
-					p.global_css << p.css_stack.pop()
-					continue
-				}
-				popped := p.css_stack.pop()
-				mut last := p.css_stack[p.css_stack.len - 1]
-				last.embedded << popped
+				// if tok.is_also_tag_close {
+				// 	if p.open_tags.len > 0 {
+				// 		p.open_tags.pop()
+				// 	} else {
+				// 		return error('Invalid token: ${tok}')
+				// 	}
+				// }
+				// if p.css_stack.len == 0 {
+				// 	return error('Invalid token: ${tok}')
+				// }
+				// if p.css_stack.len == 1 {
+				// 	p.global_css << p.css_stack.pop()
+				// 	continue
+				// }
+				// popped := p.css_stack.pop()
+				// mut last := p.css_stack[p.css_stack.len - 1]
+				// last.embedded << popped
 			}
-			else {}
+			CSSMLAttribute {
+				if !p.in_html {
+					return error('Unexpected token: ${tok}')
+				}
+
+				mut last_tag := p.open_tags.last()
+				last_tag.cssml_attributes << ast.CSSMLAttribute{
+					name: tok.name
+					args: tok.vals
+				}
+			}
+			EOFToken {
+				break
+			}
 		}
 	}
 	// println(tok.type_name())

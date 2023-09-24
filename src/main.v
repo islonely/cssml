@@ -31,6 +31,10 @@ fn main() {
 		execute: fn (cmd cli.Command) ! {
 			watch := cmd.flags.get_bool('-watch') or { false }
 			if !watch {
+				if cmd.args.len == 0 {
+					println(term.bright_red('error: ') + 'No input file or directory provided.')
+				}
+
 				for arg in cmd.args {
 					abs_path := os.abs_path(arg)
 					if os.is_dir(abs_path) {

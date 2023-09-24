@@ -26,7 +26,7 @@ pub fn (tree Tree) html() string {
 			// should be able to do this, but "css.str()" returns the reference address
 			// When a reference invokes it's .str() method it prefaces the string value
 			// with a `&` character; thus the `1..`.
-			inner_text: tree.global_css.map(|css| css.str()[1..]).join('\n')
+			inner_text: tree.global_css.map(|css| css.str()).join('\n')
 			attributes: [
 				Attribute {
 					name: 'type',
@@ -74,6 +74,7 @@ __global:
 	comments   []Comment   = []Comment{cap: 10}
 	attributes []Attribute = []Attribute{cap: 15}
 	children   []&Node     = []&Node{cap: 15}
+	cssml_attributes []CSSMLAttribute = []CSSMLAttribute{cap: 5}
 }
 
 // html returns the HTML string representation of the tag.
@@ -127,6 +128,12 @@ pub struct Attribute {
 __global:
 	name  string
 	value ?string
+}
+
+pub struct CSSMLAttribute {
+__global:
+	name string
+	args []string = []string{cap: 10}
 }
 
 // Comment is an HTML comment in the AST.

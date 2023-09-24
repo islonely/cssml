@@ -28,16 +28,27 @@ pub enum CSSGlobalMode {
 // nested CSS blocks.
 pub struct CSS {
 __global:
+	comments []Comment
 	query_selector string
 	rules map[string]string
 	embedded []&CSS = []&CSS{cap: 10}
 }
 
 // str returns the CSS block as a string.
-pub fn (css CSS) str() string {
+pub fn (css &CSS) str() string {
 	mut sb := strings.new_builder(5000)
 	sb.write_string(css.str_recer(0))
 	return sb.str()
+}
+
+// inline_rules returns the CSS rules on a single line. Used
+// for the value of HTML tag's style attribute.
+pub fn (css &CSS) inline_rules() string {
+	mut sb := strings.new_builder(1000)
+	for rule_name, rule_value in css.rules {
+		sb.write_string(' ${rule_name}: ${rule_value.trim_space()};')
+	}
+	return sb.str().trim_space()
 }
 
 // str_recer is a recursive function that returns the CSS
