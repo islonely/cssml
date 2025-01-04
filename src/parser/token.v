@@ -18,7 +18,6 @@ type Token = CSSRule
 	| CSSMLAttribute
 	| InnerTextToken
 
-
 // InnerTextToken represents a string of text.
 struct InnerTextToken {
 mut:
@@ -39,16 +38,16 @@ mut:
 // CSSRuleOpen represents 'div#id.class {'
 struct CSSRuleOpen {
 mut:
-	pos            int
-	len            int
+	pos          int
+	len          int
 	direct_child bool
-	name string
-	id string
-	classes []string = []string{cap: 10}
-	attributes map[string]?string
-	pseudo struct {
+	name         string
+	id           string
+	classes      []string = []string{cap: 10}
+	attributes   map[string]?string
+	pseudo       struct {
 	mut:
-		classes []string = []string{cap: 5}
+		classes  []string = []string{cap: 5}
 		elements []string = []string{cap: 1}
 	}
 }
@@ -56,30 +55,30 @@ mut:
 // QuerySelectorParams is a struct that can be passed to
 // CSSRuleOpen.query_selector to determine which parts of the
 // selector string to include.
-[params]
+@[params]
 struct QuerySelectorParams {
-	name bool
-	id bool
-	classes bool
+	name       bool
+	id         bool
+	classes    bool
 	attributes bool
-	pseudo struct {
-		classes bool
+	pseudo     struct {
+		classes  bool
 		elements bool
 	}
 }
 
 // QuerySelectorParams.all returns a QuerySelectorParams with all fields set to true.
-[inline]
+@[inline]
 fn QuerySelectorParams.all() QuerySelectorParams {
 	return QuerySelectorParams{
-		name: true,
-		id: true,
-		classes: true,
-		attributes: true,
-		pseudo: struct {
-			classes: true,
-			elements: true,
-		},
+		name:       true
+		id:         true
+		classes:    true
+		attributes: true
+		pseudo:     struct {
+			classes:  true
+			elements: true
+		}
 	}
 }
 
@@ -133,8 +132,8 @@ mut:
 // CSSRuleClose represents a closing bracket '}' for CSS rules.
 struct CSSRuleClose {
 mut:
-	pos int
-	len int
+	pos               int
+	len               int
 	is_also_tag_close bool
 }
 

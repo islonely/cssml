@@ -2,37 +2,37 @@ module ast
 
 import strings
 
-pub const const_tags_that_do_not_need_a_close_tag = ['area', 'base', 'br', 'embed', 'hr', 'img', 'input',
-	'link', 'meta', 'param', 'source', 'track', 'wbr']
+pub const const_tags_that_do_not_need_a_close_tag = ['area', 'base', 'br', 'embed', 'hr', 'img',
+	'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']
 
 // Tree is the root of the AST.
-[heap]
+@[heap]
 pub struct Tree {
 __global:
 	inner_text ?string
 	comments   []Comment = []Comment{cap: 10}
 	// This is the CSS that is added to the end of the <head> tag.
 	global_css []&CSS  = []&CSS{cap: 100}
-	children    []&Node = []&Node{cap: 15}
-	head ?&Tag
-	body ?&Tag
+	children   []&Node = []&Node{cap: 15}
+	head       ?&Tag
+	body       ?&Tag
 }
 
 // html returns the HTML string representation of the tree.
 pub fn (tree Tree) html() string {
 	if mut head := tree.head {
-		head.children << &Tag {
-			name: 'style',
+		head.children << &Tag{
+			name: 'style'
 			// should be able to do this, but "css.str()" returns the reference address
 			// When a reference invokes it's .str() method it prefaces the string value
 			// with a `&` character; thus the `1..`.
 			inner_text: tree.global_css.map(|css| css.str()).join('\n')
 			attributes: [
-				Attribute {
-					name: 'type',
-					value: 'text/css',
+				Attribute{
+					name:  'type'
+					value: 'text/css'
 				},
-			],
+			]
 		}
 	} else {
 		eprintln('error: no <head> tag found in the CSSML file.')
@@ -45,7 +45,7 @@ pub fn (tree Tree) html() string {
 	}
 
 	mut builder := strings.new_builder(2500)
-	
+
 	if tree.comments.len > 0 {
 		for comment in tree.comments {
 			builder.writeln(comment.html_recur(0))
@@ -66,14 +66,14 @@ pub interface Node {
 }
 
 // Tag is an HTML tag in the AST.
-[heap]
+@[heap]
 pub struct Tag {
 __global:
-	name       string
-	inner_text ?string
-	comments   []Comment   = []Comment{cap: 10}
-	attributes []Attribute = []Attribute{cap: 15}
-	children   []&Node     = []&Node{cap: 15}
+	name             string
+	inner_text       ?string
+	comments         []Comment        = []Comment{cap: 10}
+	attributes       []Attribute      = []Attribute{cap: 15}
+	children         []&Node          = []&Node{cap: 15}
 	cssml_attributes []CSSMLAttribute = []CSSMLAttribute{cap: 5}
 }
 
@@ -140,7 +140,7 @@ __global:
 pub type Comment = string
 
 // html returns the HTML string representation of the comment.
-[inline]
+@[inline]
 pub fn (comment Comment) html_recur(depth int) string {
 	mut builder := strings.new_builder(200)
 

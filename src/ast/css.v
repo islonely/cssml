@@ -15,7 +15,7 @@ pub enum CSSMode {
 
 // CSSGlobalMode is how the CSS query selector will be
 // generated.
-[flag]
+@[flag]
 pub enum CSSGlobalMode {
 	id
 	class
@@ -28,10 +28,10 @@ pub enum CSSGlobalMode {
 // nested CSS blocks.
 pub struct CSS {
 __global:
-	comments []Comment
+	comments       []Comment
 	query_selector string
-	rules map[string]string
-	embedded []&CSS = []&CSS{cap: 10}
+	rules          map[string]string
+	embedded       []&CSS = []&CSS{cap: 10}
 }
 
 // str returns the CSS block as a string.

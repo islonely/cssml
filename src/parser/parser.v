@@ -1,22 +1,21 @@
 module parser
 
 import ast
-import datatypes { Stack }
 import strings
 import term
 
 // Parser is responsible for parsing the tokens emitted by the tokenizer.
 struct Parser {
 pub mut:
-	tokenizer Tokenizer
-	in_html bool
-	current_styles strings.Builder = strings.new_builder(2500)
-	css_mode ast.CSSMode = .global
-	global_css []&ast.CSS = []&ast.CSS{cap: 100}
-	css_stack []&ast.CSS = []&ast.CSS{cap: 100}
-	attributes []CSSMLAttribute = []CSSMLAttribute{cap: 100}
-	tree &ast.Tree = &ast.Tree{}
-	open_tags []&ast.Tag = []&ast.Tag{cap: 100}
+	tokenizer      Tokenizer
+	in_html        bool
+	current_styles strings.Builder  = strings.new_builder(2500)
+	css_mode       ast.CSSMode      = .global
+	global_css     []&ast.CSS       = []&ast.CSS{cap: 100}
+	css_stack      []&ast.CSS       = []&ast.CSS{cap: 100}
+	attributes     []CSSMLAttribute = []CSSMLAttribute{cap: 100}
+	tree           &ast.Tree        = &ast.Tree{}
+	open_tags      []&ast.Tag       = []&ast.Tag{cap: 100}
 }
 
 // Parser.new instantiates a Parser with the given source CSSML.
@@ -30,11 +29,8 @@ pub fn Parser.new(src string) Parser {
 // parse parses the source CSSML and stores the result in the Parser's tree.
 pub fn (mut p Parser) parse() ! {
 	mut tok := p.tokenizer.emit_token()!
-	// println(term.bright_blue('[Tokenization]'))
 	for tok !is EOFToken {
-		// println(tok)
 		tok = p.tokenizer.emit_token()!
-		// println(tok)
 
 		match mut tok {
 			CommentToken {
@@ -56,7 +52,9 @@ pub fn (mut p Parser) parse() ! {
 			CSSRuleOpen {
 				if tok.name == 'html' || (tok.direct_child && p.in_html) {
 					p.in_html = true
-					mut this_tag := &ast.Tag{name: tok.name}
+					mut this_tag := &ast.Tag{
+						name: tok.name
+					}
 					if this_tag.name == 'head' {
 						p.tree.head = this_tag
 					} else if this_tag.name == 'body' {
@@ -122,7 +120,7 @@ pub fn (mut p Parser) parse() ! {
 						match attrib.name {
 							'local' {
 								last_tag.attributes << ast.Attribute{
-									name: 'style',
+									name:  'style'
 									value: css_to_insert.inline_rules()
 								}
 							}

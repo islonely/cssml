@@ -5,13 +5,11 @@ import os
 import parser
 import term
 
-const (
-	no_args = 'Usage: cssml [options] <file>
+const no_args = 'Usage: cssml [options] <file>
 
 Options:
 	-h, --help     output usage information
 	-v, --version  output the version number'
-)
 
 fn main() {
 	// cssml := os.read_file('./example.cssml') or {
@@ -26,9 +24,9 @@ fn main() {
 	// // println(p.global_css)
 	// println(p.tree.html())
 	mut app := cli.Command{
-		name: 'cssml',
-		description: 'A CSSML compiler - CSS and HTML in one file.',
-		execute: fn (cmd cli.Command) ! {
+		name:        'cssml'
+		description: 'A CSSML compiler - CSS and HTML in one file.'
+		execute:     fn (cmd cli.Command) ! {
 			watch := cmd.flags.get_bool('-watch') or { false }
 			if !watch {
 				if cmd.args.len == 0 {
@@ -44,14 +42,14 @@ fn main() {
 					}
 				}
 			}
-		},
-		flags: [
+		}
+		flags:       [
 			cli.Flag{
-				flag: .bool
-				name: '-watch',
-				abbrev: 'w',
-				description: 'Watch for changes and recompile.',
-			}
+				flag:        .bool
+				name:        '-watch'
+				abbrev:      'w'
+				description: 'Watch for changes and recompile.'
+			},
 		]
 	}
 	app.setup()
@@ -59,13 +57,11 @@ fn main() {
 }
 
 fn compile_directory(abs_path string) {
-
 }
 
 fn compile_file(abs_path string) {
 	abs_directory := os.dir(abs_path)
 	file_name := os.file_name(abs_path).split('.')[0]
-	file_ext := '.cssml'
 
 	if abs_path.contains('.') {
 		ext := abs_path.split('.').last()
